@@ -1,0 +1,4 @@
+actions:
+  cooldown: 0.12
+  enhancement_pause: 0.12
+  dismantle_point: [337, 870]

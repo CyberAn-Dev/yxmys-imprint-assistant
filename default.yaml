@@ -1,0 +1,88 @@
+window:
+  title_contains: "英雄没有闪"
+  reference_width: 550
+  reference_height: 1020
+  aspect_ratio_tolerance: 0.05
+  minimum_width: 300
+  minimum_height: 500
+
+capture:
+  interval: 0.12
+  battle_interval: 0.08
+  locate_retry_interval: 1.0
+  max_frame_age: 1.0
+
+matching:
+  select_anchor_threshold: 0.78
+  # 实机 558x999 窗口下通常约 0.77；底部 ROI + 难度行验证会阻止误点。
+  challenge_threshold: 0.75
+  # 实机确认弹窗约 0.78；确认弹窗优先级高于底层挑战按钮。
+  start_threshold: 0.75
+  # 实机成功/失败结算页均会出现“点击关闭”，命中后关闭并继续挑战当前难度。
+  close_threshold: 0.75
+  other_device_threshold: 0.85
+  near_threshold_delta: 0.05
+
+rois:
+  select_anchor: [100, 55, 450, 150]
+  difficulty_list: [70, 320, 480, 805]
+  challenge_button: [150, 820, 400, 950]
+  start_button: [160, 620, 390, 770]
+  # 当前窗口的成功页和失败页按钮高度不同，ROI 覆盖两种结算布局。
+  close_prompt: [140, 580, 410, 860]
+  other_device_message: [40, 400, 510, 620]
+
+template_crops:
+  select_anchor: [140, 60, 410, 140]
+  challenge_button: [180, 875, 370, 925]
+  start_button: [205, 675, 350, 740]
+  close_prompt: [220, 748, 335, 785]
+  other_device_message: [70, 470, 480, 560]
+
+difficulty:
+  # 由 selected_level_retry 记录并重复挑战用户启动时手动选中的当前难度。
+  row_centers: [360, 450, 555, 655, 760]
+  # 必须点左侧「难度 XX」圆形区域；点中间 logo 会弹出 BUFF 信息。
+  click_x: 110
+  click_half_width: 35
+  row_half_height: 28
+  row_inner_x1: 90
+  row_inner_x2: 460
+  border_thickness: 8
+  saturation_threshold: 75.0
+  high_saturation_threshold: 90.0
+  high_saturation_ratio: 0.25
+  gray_ratio_threshold: 0.40
+  yellow_hsv_lower: [5, 40, 100]
+  yellow_hsv_upper: [50, 255, 255]
+  yellow_border_ratio_threshold: 0.06
+  yellow_edge_coverage_threshold: 0.25
+
+actions:
+  cooldown: 0.45
+  post_select_wait: 0.40
+  post_click_wait: 0.50
+  # 点击“挑战深渊”后暂停其他动作，等待弹窗完成动画，再固定点击开始按钮。
+  confirm_open_wait: 1.2
+  confirm_start_point: [277, 707]
+  confirm_start_bounds: [205, 675, 350, 740]
+  # 首次点击开始后先等待进入战斗，避免动画期间重复点击。
+  start_retry_wait: 1.5
+  max_select_retries: 3
+  battle_timeout: 900.0
+  unknown_timeout: 30.0
+  debounce_frames: 2
+  debounce_required: 1
+  click_jitter:
+    enabled: true
+    inset_px: 4
+    inset_ratio: 0.18
+
+hotkeys:
+  toggle: "<f8>"
+  stop: "<f9>"
+  emergency_pause: "<esc>"
+
+pyautogui:
+  failsafe: true
+  pause: 0.05
