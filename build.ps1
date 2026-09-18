@@ -1,9 +1,13 @@
 param(
-    [string]$Python = (Join-Path $PSScriptRoot '..\.venv\Scripts\python.exe')
+    [string]$Python = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $project = (Resolve-Path -LiteralPath $PSScriptRoot).Path
+if (-not $Python) {
+    $nearbyVenv = Join-Path $project '..\yxmys\.venv\Scripts\python.exe'
+    $Python = if (Test-Path -LiteralPath $nearbyVenv) { $nearbyVenv } else { 'python' }
+}
 $source = Join-Path $project 'src'
 $dist = Join-Path $project 'dist'
 $work = Join-Path $project 'build'
