@@ -1,4 +1,4 @@
-"""Version 2.4 fixed Apple-inspired presentation."""
+"""Version 2.5 fixed Apple-inspired presentation."""
 import copy
 import queue
 import re
@@ -104,7 +104,7 @@ class ImprintDecomposeUI(BaseUI):
         self._set_window_icon()
         self.root.report_callback_exception = self._on_callback_error
         self.root.attributes('-alpha', 1.0)
-        self.root.geometry('760x800')
+        self.root.geometry('760x940')
         self.root.resizable(False, False)
         self._apply_stats(controller.stats)
         self.root.after(80, self._drain)
@@ -124,7 +124,8 @@ class ImprintDecomposeUI(BaseUI):
         mapping = {
             'program_status': stats.program_status,
             'window_status': stats.window_status,
-            'last_action': stats.last_action,
+            'current_resolution': f'当前分辨率：{stats.window_size or "—"}',
+            'last_action': self._friendly_action(stats.last_action),
             'total_decomposed': str(stats.total_decomposed),
             'total_kept': str(stats.total_kept),
             'enhancement_clicks': str(stats.enhancement_clicks),
@@ -172,6 +173,25 @@ class ImprintDecomposeUI(BaseUI):
         if error and error != '-' and error != self._last_error_logged:
             self._last_error_logged = error
             self._save_error_snapshot(error, stats)
+
+    @staticmethod
+    def _friendly_action(value):
+        text = (value or '').strip()
+        if not text or text == '-':
+            return '等待操作'
+        technical = (
+            'VISION ', 'DETAIL_DIAGNOSTIC', 'CONFIRM_DIAGNOSTIC',
+            'REWARD_DIAGNOSTIC', 'LIST_DIAGNOSTIC',
+        )
+        if text.startswith(technical) or (' phase=' in text and ' state=' in text):
+            if 'REWARD' in text:
+                return '正在完成分解流程…'
+            if 'CONFIRM' in text:
+                return '正在确认分解…'
+            if 'LIST' in text:
+                return '等待选择下一个刻印'
+            return '正在识别当前刻印…'
+        return text
 
     def _show_combination(self, combination):
         for child in self._current_icons.winfo_children():
@@ -305,6 +325,13 @@ class ImprintDecomposeUI(BaseUI):
         self._vars['window_status'] = tk.StringVar(value='未找到窗口')
         self._label(status, '', textvariable=self._vars['window_status'], fg=self.MUTED,
                     bg=self.BG, size=9, anchor='e').pack(anchor='e')
+        reference = self.controller.cfg['window']
+        suggestion = f"建议分辨率：{reference['reference_width']}×{reference['reference_height']}"
+        self._label(status, suggestion, fg=self.MUTED,
+                    bg=self.BG, size=9, anchor='e').pack(anchor='e')
+        self._vars['current_resolution'] = tk.StringVar(value='当前分辨率：—')
+        self._label(status, '', textvariable=self._vars['current_resolution'], fg=self.MUTED,
+                    bg=self.BG, size=9, anchor='e').pack(anchor='e')
         toolbar = tk.Frame(outer, bg=self.BG)
         toolbar.pack(fill='x', pady=(0, 14))
         for text, command, color, hover, fg in (
@@ -313,6 +340,16 @@ class ImprintDecomposeUI(BaseUI):
             ('停止  F10', self.controller.stop, '#ff3b30', '#ff453a', 'white')):
             RoundedButton(toolbar, text=text, command=command, width=132,
                           bg=color, hover_bg=hover, fg=fg).pack(side='left', padx=(0, 10))
+
+        reminder = tk.Frame(
+            outer, bg='#fff8e6', padx=14, pady=9,
+            highlightbackground='#ffd27a', highlightthickness=1,
+        )
+        reminder.pack(fill='x', pady=(0, 12))
+        self._label(
+            reminder, '使用前请手动勾选“本次登录不再提醒”',
+            fg='#a65f00', bg='#fff8e6', size=10, bold=True,
+        ).pack(anchor='center')
 
         settings = self._panel(outer, '')
         line = tk.Frame(settings, bg=self.CARD)

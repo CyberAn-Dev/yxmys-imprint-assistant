@@ -92,6 +92,7 @@ class ImprintDecomposeController(BaseController):
     def _reset_enhancement_session(self):
         self._result_signature = None
         self._result_seen = 0
+        self._initial_existing_enhancements = None
         return super()._reset_enhancement_session()
 
     def _handle_detail(self, window, frame, analysis):
@@ -99,6 +100,25 @@ class ImprintDecomposeController(BaseController):
         if not (self._enhancement_is_enabled() and detail and detail.right_ready
                 and analysis.dismantle_ready):
             return super()._handle_detail(window, frame, analysis)
+
+        if self._enhancement_current_combination is None:
+            original_elements = tuple(
+                slot.element for slot in detail.right_slots[:2]
+                if slot.active and slot.element
+            )
+            self._ensure_enhancement_session(
+                detail.right_combination,
+                original_elements=original_elements,
+            )
+            existing = max(0, min(3, detail.right_filled_count - 2))
+            self._initial_existing_enhancements = existing
+            self._enhancement_completed = existing
+            self.stats.enhancement_completed = existing
+            if existing:
+                self.stats.last_action = f'检测到已强化 {existing} 次，按当前槽位继续判断'
+                self._update_enhancement_status(analysis)
+                self._emit_stats()
+                self._phase_since = time.monotonic() - 0.5
 
         target, completed = self._enhancement_progress()
         if completed:
@@ -134,10 +154,16 @@ class ImprintDecomposeController(BaseController):
                 current = set(detail.right_combination)
                 threshold = float(self.stats.red_attribute_threshold)
                 unreadable = analysis.red_attribute_unreadable_count
-                reason = enhancement_keep_reason(
-                    analysis.red_attribute_values, unreadable, threshold,
-                    originals, current,
-                )
+                initial_existing = self._initial_existing_enhancements or 0
+                if initial_existing > target:
+                    reason = (
+                        f'已强化 {initial_existing} 次，超过当前设置的 {target} 次'
+                    )
+                else:
+                    reason = enhancement_keep_reason(
+                        analysis.red_attribute_values, unreadable, threshold,
+                        originals, current,
+                    )
                 if reason:
                     self._record_operation(
                         f'KEEP_DECISION round={completed}/{target} slots={detail.right_filled_count} '

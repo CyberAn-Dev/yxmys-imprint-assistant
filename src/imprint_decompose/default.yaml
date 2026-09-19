@@ -2,3 +2,8 @@ actions:
   cooldown: 0.12
   enhancement_pause: 0.12
   dismantle_point: [337, 870]
+
+vision:
+  # Small red percentage digits are anti-aliased after window scaling.
+  red_attribute_digit_min_height: 8
+  red_attribute_min_digit_confidence: 0.44
