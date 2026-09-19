@@ -5,6 +5,18 @@ import time
 from .controller import BotError, ImprintDecomposeController as BaseController
 
 
+def enhancement_keep_reason(values, unreadable, threshold, originals, current):
+    """Return a keep reason only when the configured rule is satisfied."""
+    qualifying = tuple(value for value in values if value > threshold)
+    if qualifying:
+        return f'红色词条 {max(qualifying):g}% > {threshold:g}%'
+    if unreadable:
+        return '红色词条数值无法确认'
+    if originals and current.issubset(originals):
+        return '强化后没有第三种元素颜色'
+    return None
+
+
 class ImprintDecomposeController(BaseController):
     def _reset_enhancement_session(self):
         self._result_signature = None
@@ -36,7 +48,7 @@ class ImprintDecomposeController(BaseController):
                 return
 
             signature = (completed, tuple(detail.right_combination),
-                         analysis.red_attribute_count,
+                         tuple(analysis.red_attribute_values),
                          analysis.red_attribute_unreadable_count)
             if signature != getattr(self, '_result_signature', None):
                 self._result_signature = signature
@@ -49,14 +61,18 @@ class ImprintDecomposeController(BaseController):
             if completed >= target:
                 originals = set(self._enhancement_original_elements or ())
                 current = set(detail.right_combination)
-                red_count = (analysis.red_attribute_count
-                             + analysis.red_attribute_unreadable_count)
-                if red_count or (originals and current.issubset(originals)):
-                    reason = ('出现红色词条' if red_count else '强化后没有第三种元素颜色')
+                threshold = float(self.stats.red_attribute_threshold)
+                unreadable = analysis.red_attribute_unreadable_count
+                reason = enhancement_keep_reason(
+                    analysis.red_attribute_values, unreadable, threshold,
+                    originals, current,
+                )
+                if reason:
                     self._record_operation(
                         f'KEEP_DECISION round={completed}/{target} slots={detail.right_filled_count} '
                         f'original={sorted(originals)} current={sorted(current)} '
-                        f'red={red_count} reason={reason}'
+                        f'red_values={list(analysis.red_attribute_values)} '
+                        f'threshold={threshold:g} unreadable={unreadable} reason={reason}'
                     )
                     self._keep_detail(
                         window, frame, analysis, reason=reason,

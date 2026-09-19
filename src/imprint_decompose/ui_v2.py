@@ -1,4 +1,4 @@
-"""Version 2.1 presentation; controller and recognition remain unchanged."""
+"""Version 2.2 presentation and threshold controls."""
 import copy
 import queue
 import re
@@ -16,10 +16,10 @@ from .controller import ELEMENT_ORDER
 
 
 class ConfirmationSwitch(tk.Canvas):
-    """Two-state switch: blue automatic mode, green manual mode."""
+    """Compact two-state segmented control."""
 
     def __init__(self, parent, variable, command):
-        super().__init__(parent, width=164, height=42, bg=parent.cget('bg'),
+        super().__init__(parent, width=158, height=36, bg=parent.cget('bg'),
                          highlightthickness=0, bd=0, cursor='hand2')
         self.variable = variable
         self.command = command
@@ -35,15 +35,20 @@ class ConfirmationSwitch(tk.Canvas):
         self.delete('all')
         automatic = self.variable.get() == 'auto'
         color = '#007aff' if automatic else '#21a367'
-        self.create_oval(1, 1, 41, 41, fill=color, outline=color)
-        self.create_oval(123, 1, 163, 41, fill=color, outline=color)
-        self.create_rectangle(21, 1, 143, 41, fill=color, outline=color)
-        x0 = 4 if automatic else 82
-        self.create_oval(x0, 4, x0 + 78, 38, fill='white', outline='white')
-        self.create_text(43, 21, text='自动', fill=color if automatic else 'white',
-                         font=('Microsoft YaHei UI', 11, 'bold'))
-        self.create_text(121, 21, text='手动', fill='white' if automatic else color,
-                         font=('Microsoft YaHei UI', 11, 'bold'))
+        self._round_rect(1, 1, 157, 35, 9, fill='#e8eef6', outline='#d7e1ed')
+        x0, x1 = ((3, 79) if automatic else (79, 155))
+        self._round_rect(x0, 3, x1, 33, 7, fill=color, outline=color)
+        self.create_text(41, 18, text='自动', fill='white' if automatic else '#64768b',
+                         font=('Microsoft YaHei UI', 10, 'bold' if automatic else 'normal'))
+        self.create_text(117, 18, text='手动', fill='white' if not automatic else '#64768b',
+                         font=('Microsoft YaHei UI', 10, 'bold' if not automatic else 'normal'))
+
+    def _round_rect(self, x0, y0, x1, y1, radius, **kwargs):
+        points = (x0 + radius, y0, x1 - radius, y0, x1, y0,
+                  x1, y0 + radius, x1, y1 - radius, x1, y1,
+                  x1 - radius, y1, x0 + radius, y1, x0, y1,
+                  x0, y1 - radius, x0, y0 + radius, x0, y0)
+        return self.create_polygon(points, smooth=True, splinesteps=24, **kwargs)
 
 
 class ImprintDecomposeUI(BaseUI):
@@ -60,14 +65,16 @@ class ImprintDecomposeUI(BaseUI):
         self._last_kept_count = 0
         self._keep_alert_active = False
         self._keep_combination = ''
+        self._threshold_initialized = False
         super().__init__(controller)
         self.root.title(f'{APP_NAME} · v{__version__}')
+        self._set_window_icon()
         self.root.report_callback_exception = self._on_callback_error
         self.root.attributes('-alpha', 1.0)
         self.root.resizable(True, True)
-        self.root.minsize(720, 800)
-        height = min(850, self.root.winfo_screenheight() - 100)
-        self.root.geometry(f'780x{height}')
+        self.root.minsize(700, 700)
+        height = max(700, min(800, self.root.winfo_screenheight() - 90))
+        self.root.geometry(f'760x{height}')
         self._apply_stats(controller.stats)
         self.root.after(80, self._drain)
 
@@ -97,6 +104,12 @@ class ImprintDecomposeUI(BaseUI):
             self._element_vars[element].set(str(stats.element_counts.get(element, 0)))
         self._enhancement_enabled_var.set(stats.enhancement_enabled)
         self._enhancement_rounds_var.set(str(stats.enhancement_target))
+        if not self._threshold_initialized:
+            self._enhancement_threshold_var.set(
+                f'{float(stats.red_attribute_threshold):g}'
+            )
+            self._threshold_initialized = True
+        self._update_threshold_note()
         self._confirmation_mode_var.set('manual' if stats.confirmation_mode == '手动确认' else 'auto')
 
         combination = stats.current_combination or ''
@@ -157,6 +170,30 @@ class ImprintDecomposeUI(BaseUI):
         save_error_report(error, context='Tk 界面回调异常',
                           exc_info=(error_type, error, trace))
         self._vars['last_action'].set('界面出错，过程日志已保存到 logs')
+
+    def _set_window_icon(self):
+        base = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[2]))
+        icon = base / 'assets' / 'app_icon.ico'
+        if icon.exists():
+            try:
+                self.root.iconbitmap(default=str(icon))
+            except tk.TclError:
+                pass
+
+    def _update_threshold_note(self, *_args):
+        if not hasattr(self, '_threshold_note_var'):
+            return
+        value = self._enhancement_threshold_var.get().strip() or '20'
+        self._threshold_note_var.set(
+            f'保留：红色词条 > {value}% 或未出现第三种颜色；数值无法确认时暂停'
+        )
+
+    def _on_enhancement_settings_changed(self, _event=None, *, show_error=True):
+        result = super()._on_enhancement_settings_changed(
+            _event, show_error=show_error
+        )
+        self._update_threshold_note()
+        return result
 
     def _element_icon(self, element):
         # Keep the game's original pixels; only remove the surrounding screenshot background.
@@ -245,8 +282,27 @@ class ImprintDecomposeUI(BaseUI):
         self._segment(options, self._enhancement_rounds_var,
                       [('1 次', '1'), ('2 次', '2'), ('3 次', '3')],
                       self._on_enhancement_settings_changed).pack(side='left')
-        self._label(options, '任意红色词条或无第三种颜色 → 保留',
-                    fg=self.MUTED).pack(side='left', padx=(22, 0))
+        threshold_box = tk.Frame(options, bg=self.CARD)
+        threshold_box.pack(side='right')
+        self._label(threshold_box, '红色阈值', fg=self.MUTED).pack(side='left', padx=(0, 7))
+        threshold = tk.Spinbox(
+            threshold_box, from_=0, to=27, increment=0.5, width=5,
+            textvariable=self._enhancement_threshold_var, justify='center',
+            command=self._on_enhancement_settings_changed,
+            bg=self.FIELD, fg=self.TEXT, buttonbackground='#e8eef6',
+            relief='flat', bd=0, highlightthickness=1,
+            highlightbackground='#d7e1ed', highlightcolor='#007aff',
+            font=('Microsoft YaHei UI', 10),
+        )
+        threshold.pack(side='left')
+        self._label(threshold_box, '%', fg=self.MUTED).pack(side='left', padx=(4, 0))
+        threshold.bind('<Return>', self._on_enhancement_settings_changed)
+        threshold.bind('<FocusOut>', lambda event: self._on_enhancement_settings_changed(event, show_error=False))
+        self._threshold_note_var = tk.StringVar()
+        self._enhancement_threshold_var.trace_add('write', self._update_threshold_note)
+        self._update_threshold_note()
+        self._label(settings, '', textvariable=self._threshold_note_var,
+                    fg=self.MUTED, size=9).pack(anchor='e', pady=(8, 0))
 
         metrics = self._panel(outer, '')
         for i, (title, key) in enumerate((('已分解', 'total_decomposed'), ('已保留', 'total_kept'), ('强化次数', 'enhancement_clicks'))):

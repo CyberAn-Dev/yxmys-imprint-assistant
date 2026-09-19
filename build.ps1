@@ -17,6 +17,8 @@ $version = $match.Groups[1].Value
 $release = Join-Path $project 'release'
 $work = Join-Path $project 'build'
 $name = "yxmys-刻印快速筛选分解小助手-v$version"
+$icon = Join-Path $project 'assets\app_icon.ico'
+$hooks = Join-Path $project 'packaging_hooks'
 New-Item -ItemType Directory -Force $release | Out-Null
 
 # Conda's _ctypes.pyd loads ffi.dll at runtime. PyInstaller does not always
@@ -42,11 +44,13 @@ foreach ($dllName in @('tcl86t.dll', 'tk86t.dll')) {
 }
 
 & $Python -m PyInstaller @extraBinaries --noconfirm --onefile --windowed `
-    --name $name --paths $source --distpath $release `
+    --name $name --icon $icon --paths $source --distpath $release `
     --workpath $work --specpath $work `
+    --additional-hooks-dir $hooks `
     --add-data "$(Join-Path $project 'config\default.yaml');config" `
     --add-data "$(Join-Path $source 'imprint_decompose\default.yaml');imprint_decompose" `
     --add-data "$(Join-Path $source 'imprint_decompose\element_icons');imprint_decompose\element_icons" `
+    --add-data "$icon;assets" `
     (Join-Path $source 'imprint_decompose_entry.py')
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed.' }
 
