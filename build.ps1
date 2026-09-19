@@ -19,7 +19,29 @@ $work = Join-Path $project 'build'
 $name = "yxmys-刻印快速筛选分解小助手-v$version"
 New-Item -ItemType Directory -Force $release | Out-Null
 
-& $Python -m PyInstaller --noconfirm --onefile --windowed `
+# Conda's _ctypes.pyd loads ffi.dll at runtime. PyInstaller does not always
+# discover it, especially for one-file builds, so include it when present.
+$pythonBase = (& $Python -c 'import sys; print(sys.base_prefix)').Trim()
+$extraBinaries = @()
+$ffiCandidates = @(
+    (Join-Path $pythonBase 'Library\bin\ffi.dll'),
+    (Join-Path $pythonBase 'DLLs\libffi-8.dll'),
+    (Join-Path $pythonBase 'DLLs\libffi-7.dll')
+)
+foreach ($candidate in $ffiCandidates) {
+    if (Test-Path -LiteralPath $candidate) {
+        $extraBinaries += @('--add-binary', "$candidate;.")
+        break
+    }
+}
+foreach ($dllName in @('tcl86t.dll', 'tk86t.dll')) {
+    $candidate = Join-Path $pythonBase "Library\bin\$dllName"
+    if (Test-Path -LiteralPath $candidate) {
+        $extraBinaries += @('--add-binary', "$candidate;.")
+    }
+}
+
+& $Python -m PyInstaller @extraBinaries --noconfirm --onefile --windowed `
     --name $name --paths $source --distpath $release `
     --workpath $work --specpath $work `
     --add-data "$(Join-Path $project 'config\default.yaml');config" `
@@ -29,4 +51,3 @@ New-Item -ItemType Directory -Force $release | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed.' }
 
 Write-Output (Join-Path $release "$name.exe")
-
