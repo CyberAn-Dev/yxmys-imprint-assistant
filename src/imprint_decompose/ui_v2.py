@@ -1,4 +1,4 @@
-"""Version 2.5.1 fixed Apple-inspired presentation."""
+"""Version 2.5.2 fixed Apple-inspired presentation."""
 import copy
 import queue
 import re
@@ -55,7 +55,7 @@ class EnhancementSwitch(tk.Canvas):
     """High-contrast on/off control for automatic enhancement."""
 
     def __init__(self, parent, variable, command):
-        super().__init__(parent, width=116, height=36, bg=parent.cget('bg'),
+        super().__init__(parent, width=150, height=44, bg=parent.cget('bg'),
                          highlightthickness=0, bd=0, cursor='hand2')
         self.variable = variable
         self.command = command
@@ -72,16 +72,16 @@ class EnhancementSwitch(tk.Canvas):
         enabled = bool(self.variable.get())
         active = '#007aff' if enabled else '#8e8e93'
         ConfirmationSwitch._round_rect(
-            self, 1, 1, 115, 35, 9, fill='#f2f2f7', outline='#d8d8dc'
+            self, 1, 1, 149, 43, 11, fill='#f2f2f7', outline='#d8d8dc'
         )
-        x0, x1 = ((3, 58) if enabled else (58, 113))
+        x0, x1 = ((3, 75) if enabled else (75, 147))
         ConfirmationSwitch._round_rect(
-            self, x0, 3, x1, 33, 7, fill=active, outline=active
+            self, x0, 3, x1, 41, 9, fill=active, outline=active
         )
-        self.create_text(30, 18, text='开', fill='white' if enabled else '#6e6e73',
-                         font=('Microsoft YaHei UI', 10, 'bold' if enabled else 'normal'))
-        self.create_text(86, 18, text='关', fill='white' if not enabled else '#6e6e73',
-                         font=('Microsoft YaHei UI', 10, 'bold' if not enabled else 'normal'))
+        self.create_text(39, 22, text='开', fill='white' if enabled else '#6e6e73',
+                         font=('Microsoft YaHei UI', 12, 'bold' if enabled else 'normal'))
+        self.create_text(111, 22, text='关', fill='white' if not enabled else '#6e6e73',
+                         font=('Microsoft YaHei UI', 12, 'bold' if not enabled else 'normal'))
 
 
 class ImprintDecomposeUI(BaseUI):
