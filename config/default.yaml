@@ -7,7 +7,8 @@ window:
   minimum_height: 500
 
 capture:
-  interval: 0.12
+  # Balanced fast mode: capture often enough for the shorter click gate.
+  interval: 0.09
   battle_interval: 0.08
   locate_retry_interval: 1.0
   max_frame_age: 1.0
@@ -59,7 +60,9 @@ difficulty:
   yellow_edge_coverage_threshold: 0.25
 
 actions:
-  cooldown: 0.45
+  # The controller still requires a fresh, valid frame before every click.
+  # This only shortens the minimum gap between validated actions.
+  cooldown: 0.32
   post_select_wait: 0.40
   post_click_wait: 0.50
   # 点击“挑战深渊”后暂停其他动作，等待弹窗完成动画，再固定点击开始按钮。
@@ -85,4 +88,4 @@ hotkeys:
 
 pyautogui:
   failsafe: true
-  pause: 0.05
+  pause: 0.03

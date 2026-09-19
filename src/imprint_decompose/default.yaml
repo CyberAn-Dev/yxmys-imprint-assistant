@@ -1,6 +1,7 @@
 actions:
-  cooldown: 0.12
-  enhancement_pause: 0.12
+  # Keep a short settle time after enhancement; result stability checks remain enabled.
+  cooldown: 0.09
+  enhancement_pause: 0.09
   dismantle_point: [337, 870]
 
 vision:
