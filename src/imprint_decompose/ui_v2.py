@@ -1,4 +1,4 @@
-"""Version 3.0 fixed Apple-inspired presentation."""
+"""Version 3.1 fixed Apple-inspired presentation."""
 import copy
 from datetime import datetime
 import queue
@@ -105,7 +105,9 @@ class ImprintDecomposeUI(BaseUI):
         self._set_window_icon()
         self.root.report_callback_exception = self._on_callback_error
         self.root.attributes('-alpha', 1.0)
-        self.root.geometry('760x820')
+        # Keep a fixed desktop layout, but reserve enough vertical space for
+        # the complete statistics card and footer at normal Windows DPI.
+        self.root.geometry('760x940')
         self.root.resizable(False, False)
         self._apply_stats(controller.stats)
         self.root.after(80, self._drain)
@@ -462,7 +464,7 @@ class ImprintDecomposeUI(BaseUI):
             metrics.columnconfigure(i, weight=1, uniform='metric')
             var = tk.StringVar(value='0')
             self._vars[key] = var
-            self._label(cell, '', textvariable=var, size=25, bold=True, fg='#007aff').pack(anchor='w')
+            self._label(cell, '', textvariable=var, size=20, bold=True, fg='#007aff').pack(anchor='w')
             self._label(cell, title, fg=self.MUTED).pack(anchor='w')
 
         current = self._panel(outer, '')
