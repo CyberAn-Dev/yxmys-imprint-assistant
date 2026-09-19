@@ -137,6 +137,7 @@ class ImprintDecomposeUI(BaseUI):
             'last_action': self._friendly_action(stats.last_action),
             'total_decomposed': str(stats.total_decomposed),
             'total_kept': str(stats.total_kept),
+            'red_threshold_matches': str(getattr(stats, 'red_threshold_matches', 0)),
             'enhancement_clicks': str(stats.enhancement_clicks),
         }
         for key, value in mapping.items():
@@ -489,7 +490,12 @@ class ImprintDecomposeUI(BaseUI):
                     fg=self.MUTED, size=9).pack(anchor='e', pady=(5, 0))
 
         metrics = self._panel(outer, '')
-        for i, (title, key) in enumerate((('已分解', 'total_decomposed'), ('已保留', 'total_kept'), ('强化次数', 'enhancement_clicks'))):
+        for i, (title, key) in enumerate((
+            ('已分解', 'total_decomposed'),
+            ('已保留', 'total_kept'),
+            ('红色达标', 'red_threshold_matches'),
+            ('强化次数', 'enhancement_clicks'),
+        )):
             cell = tk.Frame(metrics, bg=self.CARD)
             cell.grid(row=0, column=i, sticky='ew')
             metrics.columnconfigure(i, weight=1, uniform='metric')

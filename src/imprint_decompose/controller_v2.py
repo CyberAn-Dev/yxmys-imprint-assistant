@@ -92,14 +92,17 @@ def enhancement_slot_plan(filled_count, target):
 
 class ImprintDecomposeController(BaseController):
     def __init__(self, cfg, feature_cfg, *, dry_run=False, on_stats=None):
+        self._red_threshold_counted = False
         super().__init__(cfg, feature_cfg, dry_run=dry_run, on_stats=on_stats)
         self.locator = ImprintWindowLocator(cfg)
         self.input.locator = self.locator
         install_game_digit_templates(self.detector)
         self._enhancement_red_threshold = 20.0
+        self.stats.red_threshold_matches = 0
         self._update_enhancement_status()
 
     def _reset_enhancement_session(self):
+        self._red_threshold_counted = False
         self._result_signature = None
         self._result_seen = 0
         self._initial_existing_enhancements = None
@@ -107,10 +110,24 @@ class ImprintDecomposeController(BaseController):
         self._initial_detail_seen = 0
         return super()._reset_enhancement_session()
 
+    def _count_red_threshold_match(self, analysis):
+        """Count one qualifying imprint once during its detail session."""
+        if self._red_threshold_counted:
+            return
+        if not self._red_attribute_meets_threshold(analysis):
+            return
+        self._red_threshold_counted = True
+        self.stats.red_threshold_matches = (
+            getattr(self.stats, 'red_threshold_matches', 0) + 1
+        )
+        self._emit_stats()
+
     def _handle_detail(self, window, frame, analysis):
         detail = analysis.detail
         if not (self._enhancement_is_enabled() and detail and detail.right_ready
                 and analysis.dismantle_ready):
+            if detail and self._red_attribute_meets_threshold(analysis):
+                self._count_red_threshold_match(analysis)
             return super()._handle_detail(window, frame, analysis)
 
         if self._enhancement_current_combination is None:
@@ -212,6 +229,8 @@ class ImprintDecomposeController(BaseController):
                         originals, current,
                     )
                 if reason:
+                    if reason.startswith('红色词条 '):
+                        self._count_red_threshold_match(analysis)
                     self._record_operation(
                         f'KEEP_DECISION round={completed}/{target} slots={detail.right_filled_count} '
                         f'original={sorted(originals)} current={sorted(current)} '

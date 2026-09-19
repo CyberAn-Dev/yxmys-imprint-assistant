@@ -1,6 +1,8 @@
 import unittest
+from types import SimpleNamespace
 
 from imprint_decompose.controller_v2 import (
+    ImprintDecomposeController,
     enhancement_keep_reason,
     enhancement_slot_plan,
 )
@@ -39,6 +41,20 @@ class EnhancementSlotPlanTests(unittest.TestCase):
             '第三种', enhancement_keep_reason((), 0, 20.0, originals,
                                                {'storm', 'arc'})
         )
+
+    def test_red_threshold_match_is_counted_once_per_detail_session(self):
+        controller = object.__new__(ImprintDecomposeController)
+        controller._red_threshold_counted = False
+        controller.stats = SimpleNamespace(red_threshold_matches=0)
+        controller._red_attribute_meets_threshold = lambda _analysis: True
+        emitted = []
+        controller._emit_stats = lambda: emitted.append(controller.stats.red_threshold_matches)
+
+        controller._count_red_threshold_match(object())
+        controller._count_red_threshold_match(object())
+
+        self.assertEqual(controller.stats.red_threshold_matches, 1)
+        self.assertEqual(emitted, [1])
 
 
 if __name__ == '__main__':
