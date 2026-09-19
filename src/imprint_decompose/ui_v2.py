@@ -1,4 +1,4 @@
-"""Version 2.3 presentation and threshold controls."""
+"""Version 2.4 fixed Apple-inspired presentation."""
 import copy
 import queue
 import re
@@ -34,13 +34,13 @@ class ConfirmationSwitch(tk.Canvas):
     def _draw(self):
         self.delete('all')
         automatic = self.variable.get() == 'auto'
-        color = '#007aff' if automatic else '#21a367'
-        self._round_rect(1, 1, 157, 35, 9, fill='#e8eef6', outline='#d7e1ed')
+        color = '#007aff' if automatic else '#34c759'
+        self._round_rect(1, 1, 157, 35, 9, fill='#f2f2f7', outline='#d8d8dc')
         x0, x1 = ((3, 79) if automatic else (79, 155))
         self._round_rect(x0, 3, x1, 33, 7, fill=color, outline=color)
-        self.create_text(41, 18, text='自动', fill='white' if automatic else '#64768b',
+        self.create_text(41, 18, text='自动', fill='white' if automatic else '#6e6e73',
                          font=('Microsoft YaHei UI', 10, 'bold' if automatic else 'normal'))
-        self.create_text(117, 18, text='手动', fill='white' if not automatic else '#64768b',
+        self.create_text(117, 18, text='手动', fill='white' if not automatic else '#6e6e73',
                          font=('Microsoft YaHei UI', 10, 'bold' if not automatic else 'normal'))
 
     def _round_rect(self, x0, y0, x1, y1, radius, **kwargs):
@@ -70,26 +70,26 @@ class EnhancementSwitch(tk.Canvas):
     def _draw(self):
         self.delete('all')
         enabled = bool(self.variable.get())
-        active = '#007aff' if enabled else '#7b8da3'
+        active = '#007aff' if enabled else '#8e8e93'
         ConfirmationSwitch._round_rect(
-            self, 1, 1, 115, 35, 9, fill='#e8eef6', outline='#d7e1ed'
+            self, 1, 1, 115, 35, 9, fill='#f2f2f7', outline='#d8d8dc'
         )
         x0, x1 = ((3, 58) if enabled else (58, 113))
         ConfirmationSwitch._round_rect(
             self, x0, 3, x1, 33, 7, fill=active, outline=active
         )
-        self.create_text(30, 18, text='开', fill='white' if enabled else '#64768b',
+        self.create_text(30, 18, text='开', fill='white' if enabled else '#6e6e73',
                          font=('Microsoft YaHei UI', 10, 'bold' if enabled else 'normal'))
-        self.create_text(86, 18, text='关', fill='white' if not enabled else '#64768b',
+        self.create_text(86, 18, text='关', fill='white' if not enabled else '#6e6e73',
                          font=('Microsoft YaHei UI', 10, 'bold' if not enabled else 'normal'))
 
 
 class ImprintDecomposeUI(BaseUI):
-    BG = '#edf3fa'
+    BG = '#f5f5f7'
     CARD = '#ffffff'
-    FIELD = '#f4f7fb'
-    TEXT = '#182c45'
-    MUTED = '#6c7e94'
+    FIELD = '#f2f2f7'
+    TEXT = '#1d1d1f'
+    MUTED = '#6e6e73'
 
     def __init__(self, controller):
         self._updates = queue.SimpleQueue()
@@ -100,14 +100,12 @@ class ImprintDecomposeUI(BaseUI):
         self._keep_combination = ''
         self._threshold_initialized = False
         super().__init__(controller)
-        self.root.title(f'{APP_NAME} · v{__version__}')
+        self.root.title(APP_NAME)
         self._set_window_icon()
         self.root.report_callback_exception = self._on_callback_error
         self.root.attributes('-alpha', 1.0)
-        self.root.resizable(True, True)
-        self.root.minsize(700, 700)
-        height = max(700, min(800, self.root.winfo_screenheight() - 90))
-        self.root.geometry(f'760x{height}')
+        self.root.geometry('760x800')
+        self.root.resizable(False, False)
         self._apply_stats(controller.stats)
         self.root.after(80, self._drain)
 
@@ -252,14 +250,14 @@ class ImprintDecomposeUI(BaseUI):
 
     def _panel(self, parent, title):
         frame = tk.Frame(parent, bg=self.CARD, padx=18, pady=12,
-                         highlightbackground='#dde6f0', highlightthickness=1)
+                         highlightbackground='#dedee3', highlightthickness=1)
         frame.pack(fill='x', pady=(0, 12))
         if title:
             self._label(frame, title, size=12, bold=True).pack(anchor='w', pady=(0, 8))
         return frame
 
     def _segment(self, parent, variable, choices, command):
-        rail = tk.Frame(parent, bg='#eaf0f8', padx=3, pady=3)
+        rail = tk.Frame(parent, bg='#f2f2f7', padx=3, pady=3)
         items = []
         for text, value in choices:
             def select(choice=value):
@@ -278,9 +276,9 @@ class ImprintDecomposeUI(BaseUI):
             for button, value in items:
                 active = selected == value
                 button.configure(
-                    bg='#007aff' if active else '#eaf0f8',
+                    bg='#007aff' if active else '#f2f2f7',
                     fg='white' if active else self.MUTED,
-                    activebackground='#268eff' if active else '#dceaff',
+                    activebackground='#0a84ff' if active else '#e5e5ea',
                     activeforeground='white' if active else '#006bea',
                 )
 
@@ -295,10 +293,10 @@ class ImprintDecomposeUI(BaseUI):
 
     def _build(self):
         outer = tk.Frame(self.root, bg=self.BG)
-        outer.pack(fill='both', expand=True, padx=22, pady=16)
+        outer.pack(fill='both', expand=True, padx=22, pady=(16, 12))
         head = tk.Frame(outer, bg=self.BG)
         head.pack(fill='x', pady=(0, 12))
-        self._label(head, APP_NAME, size=18, bold=True, bg=self.BG).pack(side='left')
+        self._label(head, APP_NAME, size=17, bold=True, bg=self.BG).pack(side='left')
         status = tk.Frame(head, bg=self.BG)
         status.pack(side='right')
         self._vars['program_status'] = tk.StringVar(value='已停止')
@@ -310,9 +308,9 @@ class ImprintDecomposeUI(BaseUI):
         toolbar = tk.Frame(outer, bg=self.BG)
         toolbar.pack(fill='x', pady=(0, 14))
         for text, command, color, hover, fg in (
-            ('开始  F9', self.controller.start, '#007aff', '#268eff', 'white'),
-            ('暂停', self.controller.pause, '#ffffff', '#e4efff', self.TEXT),
-            ('停止  F10', self.controller.stop, '#e53643', '#fa4b57', 'white')):
+            ('开始  F9', self.controller.start, '#0071e3', '#0077ed', 'white'),
+            ('暂停', self.controller.pause, '#ffffff', '#e5e5ea', self.TEXT),
+            ('停止  F10', self.controller.stop, '#ff3b30', '#ff453a', 'white')):
             RoundedButton(toolbar, text=text, command=command, width=132,
                           bg=color, hover_bg=hover, fg=fg).pack(side='left', padx=(0, 10))
 
@@ -322,7 +320,7 @@ class ImprintDecomposeUI(BaseUI):
         self._label(line, '分解确认', bold=True).pack(side='left')
         ConfirmationSwitch(line, self._confirmation_mode_var,
                            self._on_confirmation_mode_changed).pack(side='right')
-        tk.Frame(settings, bg='#edf1f6', height=1).pack(fill='x', pady=12)
+        tk.Frame(settings, bg='#e5e5ea', height=1).pack(fill='x', pady=12)
         line = tk.Frame(settings, bg=self.CARD)
         line.pack(fill='x')
         self._label(line, '自动强化', bold=True).pack(side='left')
@@ -393,8 +391,12 @@ class ImprintDecomposeUI(BaseUI):
             self._label(cell, '', textvariable=var, size=14, bold=True).pack(side='left', padx=(4, 0))
         self._label(stats, '组合', fg=self.MUTED).pack(anchor='w')
         self._combination_text = self._text(stats)
-        self._label(outer, f'作者：{__author__}   ·   v{__version__}', fg=self.MUTED,
-                    bg=self.BG, size=9).pack(side='bottom', anchor='e')
+        footer = tk.Frame(outer, bg=self.BG)
+        footer.pack(side='bottom', fill='x', pady=(1, 0))
+        self._label(footer, '仅供开发交流 · 非盈利 · 开源非商业使用', fg=self.MUTED,
+                    bg=self.BG, size=9).pack(side='left')
+        self._label(footer, f'作者：{__author__}   ·   v{__version__}', fg=self.MUTED,
+                    bg=self.BG, size=9).pack(side='right')
 
     def _text(self, parent):
         scroll = ttk.Scrollbar(parent)
