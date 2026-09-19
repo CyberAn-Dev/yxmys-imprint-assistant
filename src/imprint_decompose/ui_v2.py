@@ -1,5 +1,6 @@
-"""Version 2.6 fixed Apple-inspired presentation."""
+"""Version 2.7 fixed Apple-inspired presentation."""
 import copy
+from datetime import datetime
 import queue
 import re
 import sys
@@ -121,10 +122,11 @@ class ImprintDecomposeUI(BaseUI):
         self.root.after(80, self._drain)
 
     def _apply_stats(self, stats):
+        usage_status, usage_ok = self._window_usage_status(stats.window_size)
         mapping = {
             'program_status': stats.program_status,
             'window_status': stats.window_status,
-            'current_resolution': f'当前分辨率：{stats.window_size or "—"}',
+            'current_resolution': usage_status,
             'last_action': self._friendly_action(stats.last_action),
             'total_decomposed': str(stats.total_decomposed),
             'total_kept': str(stats.total_kept),
@@ -132,6 +134,9 @@ class ImprintDecomposeUI(BaseUI):
         }
         for key, value in mapping.items():
             self._vars[key].set(value or '—')
+        self._usage_status_label.configure(
+            fg='#248a3d' if usage_ok else '#ff3b30'
+        )
         for element in ELEMENT_ORDER:
             self._element_vars[element].set(str(stats.element_counts.get(element, 0)))
         self._enhancement_enabled_var.set(stats.enhancement_enabled)
@@ -173,6 +178,21 @@ class ImprintDecomposeUI(BaseUI):
         if error and error != '-' and error != self._last_error_logged:
             self._last_error_logged = error
             self._save_error_snapshot(error, stats)
+
+    def _window_usage_status(self, size_text):
+        match = re.search(r'(\d+)\s*[×xX]\s*(\d+)', str(size_text or ''))
+        if not match:
+            return '当前无法使用', False
+        width, height = map(int, match.groups())
+        cfg = self.controller.cfg['window']
+        expected = float(cfg['reference_width']) / float(cfg['reference_height'])
+        ratio_error = abs(width / height - expected) / expected
+        usable = (
+            width >= int(cfg['minimum_width'])
+            and height >= int(cfg['minimum_height'])
+            and ratio_error <= float(cfg.get('aspect_ratio_tolerance', 0.05))
+        )
+        return ('当前可以使用' if usable else '当前无法使用'), usable
 
     @staticmethod
     def _friendly_action(value):
@@ -305,7 +325,7 @@ class ImprintDecomposeUI(BaseUI):
         return frame
 
     def _segment(self, parent, variable, choices, command):
-        rail = tk.Frame(parent, bg='#f2f2f7', padx=3, pady=3)
+        rail = tk.Frame(parent, bg='#f2f2f7', padx=2, pady=2)
         items = []
         for text, value in choices:
             def select(choice=value):
@@ -314,7 +334,7 @@ class ImprintDecomposeUI(BaseUI):
 
             button = tk.Button(
                 rail, text=text, command=select, relief='flat', bd=0,
-                padx=16, pady=5, font=('Microsoft YaHei UI', 10), cursor='hand2',
+                padx=10, pady=3, font=('Microsoft YaHei UI', 9), cursor='hand2',
             )
             button.pack(side='left', fill='x', expand=True, padx=1)
             items.append((button, value))
@@ -362,7 +382,11 @@ class ImprintDecomposeUI(BaseUI):
 
         head = tk.Frame(outer, bg=self.BG)
         head.pack(fill='x', pady=(0, 7))
-        self._label(head, APP_NAME, size=17, bold=True, bg=self.BG).pack(side='left')
+        hour = datetime.now().hour
+        period = '早上' if 5 <= hour < 12 else ('下午' if 12 <= hour < 18 else '晚上')
+        self._label(
+            head, f'{period}好，祝你出极品刻印', size=15, bold=True, bg=self.BG,
+        ).pack(side='left')
         status = tk.Frame(head, bg=self.BG)
         status.pack(side='right')
         self._vars['program_status'] = tk.StringVar(value='已停止')
@@ -375,9 +399,12 @@ class ImprintDecomposeUI(BaseUI):
         suggestion = f"建议分辨率：{reference['reference_width']}×{reference['reference_height']}"
         self._label(status, suggestion, fg=self.MUTED,
                     bg=self.BG, size=9, anchor='e').pack(anchor='e')
-        self._vars['current_resolution'] = tk.StringVar(value='当前分辨率：—')
-        self._label(status, '', textvariable=self._vars['current_resolution'], fg=self.MUTED,
-                    bg=self.BG, size=9, anchor='e').pack(anchor='e')
+        self._vars['current_resolution'] = tk.StringVar(value='当前无法使用')
+        self._usage_status_label = self._label(
+            status, '', textvariable=self._vars['current_resolution'], fg='#ff3b30',
+            bg=self.BG, size=9, bold=True, anchor='e',
+        )
+        self._usage_status_label.pack(anchor='e')
         toolbar = tk.Frame(outer, bg=self.BG)
         toolbar.pack(fill='x', pady=(0, 8))
         for text, command, color, hover, fg in (
