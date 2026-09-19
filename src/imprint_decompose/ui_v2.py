@@ -1,4 +1,4 @@
-"""Version 3.1 fixed Apple-inspired presentation."""
+"""Version 3.2 fixed Apple-inspired presentation."""
 import copy
 from datetime import datetime
 import queue
@@ -124,7 +124,11 @@ class ImprintDecomposeUI(BaseUI):
         self.root.after(80, self._drain)
 
     def _apply_stats(self, stats):
-        usage_status, usage_ok = self._window_usage_status(stats.window_size)
+        usage_status, usage_ok = self._window_usage_status(
+            stats.window_size,
+            stats.window_status,
+            stats.vision_state,
+        )
         mapping = {
             'program_status': stats.program_status,
             'window_status': stats.window_status,
@@ -181,7 +185,18 @@ class ImprintDecomposeUI(BaseUI):
             self._last_error_logged = error
             self._save_error_snapshot(error, stats)
 
-    def _window_usage_status(self, size_text):
+    def _window_usage_status(self, size_text, window_status, vision_state):
+        window_match = re.search(
+            r'已找到\s*hwnd\s*=\s*(\d+)',
+            str(window_status or ''),
+            flags=re.IGNORECASE,
+        )
+        window_found = bool(window_match and int(window_match.group(1)) > 0)
+        visual_state = str(vision_state or '').strip().upper()
+        visual_found = visual_state not in {'', '-', 'UNKNOWN', 'NONE'}
+        if not window_found or not visual_found:
+            return '当前无法使用', False
+
         match = re.search(r'(\d+)\s*[×xX]\s*(\d+)', str(size_text or ''))
         if not match:
             return '当前无法使用', False
