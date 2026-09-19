@@ -1,4 +1,4 @@
-"""Version 2.2 presentation and threshold controls."""
+"""Version 2.3 presentation and threshold controls."""
 import copy
 import queue
 import re
@@ -49,6 +49,39 @@ class ConfirmationSwitch(tk.Canvas):
                   x1 - radius, y1, x0 + radius, y1, x0, y1,
                   x0, y1 - radius, x0, y0 + radius, x0, y0)
         return self.create_polygon(points, smooth=True, splinesteps=24, **kwargs)
+
+
+class EnhancementSwitch(tk.Canvas):
+    """High-contrast on/off control for automatic enhancement."""
+
+    def __init__(self, parent, variable, command):
+        super().__init__(parent, width=116, height=36, bg=parent.cget('bg'),
+                         highlightthickness=0, bd=0, cursor='hand2')
+        self.variable = variable
+        self.command = command
+        self.bind('<Button-1>', self._toggle)
+        self.variable.trace_add('write', lambda *_: self._draw())
+        self._draw()
+
+    def _toggle(self, _event):
+        self.variable.set(not self.variable.get())
+        self.command()
+
+    def _draw(self):
+        self.delete('all')
+        enabled = bool(self.variable.get())
+        active = '#007aff' if enabled else '#7b8da3'
+        ConfirmationSwitch._round_rect(
+            self, 1, 1, 115, 35, 9, fill='#e8eef6', outline='#d7e1ed'
+        )
+        x0, x1 = ((3, 58) if enabled else (58, 113))
+        ConfirmationSwitch._round_rect(
+            self, x0, 3, x1, 33, 7, fill=active, outline=active
+        )
+        self.create_text(30, 18, text='开', fill='white' if enabled else '#64768b',
+                         font=('Microsoft YaHei UI', 10, 'bold' if enabled else 'normal'))
+        self.create_text(86, 18, text='关', fill='white' if not enabled else '#64768b',
+                         font=('Microsoft YaHei UI', 10, 'bold' if not enabled else 'normal'))
 
 
 class ImprintDecomposeUI(BaseUI):
@@ -184,8 +217,9 @@ class ImprintDecomposeUI(BaseUI):
         if not hasattr(self, '_threshold_note_var'):
             return
         value = self._enhancement_threshold_var.get().strip() or '20'
+        operator = '=' if value in ('27', '27.0') else '≥'
         self._threshold_note_var.set(
-            f'保留：红色词条 > {value}% 或未出现第三种颜色；数值无法确认时暂停'
+            f'保留：红色词条 {operator} {value}% 或未出现第三种颜色；数值无法确认时暂停'
         )
 
     def _on_enhancement_settings_changed(self, _event=None, *, show_error=True):
@@ -228,13 +262,30 @@ class ImprintDecomposeUI(BaseUI):
         rail = tk.Frame(parent, bg='#eaf0f8', padx=3, pady=3)
         items = []
         for text, value in choices:
-            button = tk.Radiobutton(rail, text=text, value=value, variable=variable,
-                command=command, indicatoron=False, relief='flat', bd=0,
-                padx=16, pady=5, font=('Microsoft YaHei UI', 10),
-                bg='#eaf0f8', fg=self.MUTED, selectcolor='white',
-                activebackground='#dceaff', activeforeground='#006bea', cursor='hand2')
+            def select(choice=value):
+                variable.set(choice)
+                command()
+
+            button = tk.Button(
+                rail, text=text, command=select, relief='flat', bd=0,
+                padx=16, pady=5, font=('Microsoft YaHei UI', 10), cursor='hand2',
+            )
             button.pack(side='left', fill='x', expand=True, padx=1)
-            items.append(button)
+            items.append((button, value))
+
+        def refresh(*_args):
+            selected = variable.get()
+            for button, value in items:
+                active = selected == value
+                button.configure(
+                    bg='#007aff' if active else '#eaf0f8',
+                    fg='white' if active else self.MUTED,
+                    activebackground='#268eff' if active else '#dceaff',
+                    activeforeground='white' if active else '#006bea',
+                )
+
+        variable.trace_add('write', refresh)
+        refresh()
         return rail
 
     def _label(self, parent, text, *, size=10, **kwargs):
@@ -274,9 +325,9 @@ class ImprintDecomposeUI(BaseUI):
         tk.Frame(settings, bg='#edf1f6', height=1).pack(fill='x', pady=12)
         line = tk.Frame(settings, bg=self.CARD)
         line.pack(fill='x')
-        self._label(line, '强化', bold=True).pack(side='left')
-        self._check(line, '启用', self._enhancement_enabled_var,
-                    self._on_enhancement_settings_changed).pack(side='right')
+        self._label(line, '自动强化', bold=True).pack(side='left')
+        EnhancementSwitch(line, self._enhancement_enabled_var,
+                          self._on_enhancement_settings_changed).pack(side='right')
         options = tk.Frame(settings, bg=self.CARD)
         options.pack(fill='x', pady=(10, 0))
         self._segment(options, self._enhancement_rounds_var,
@@ -284,20 +335,12 @@ class ImprintDecomposeUI(BaseUI):
                       self._on_enhancement_settings_changed).pack(side='left')
         threshold_box = tk.Frame(options, bg=self.CARD)
         threshold_box.pack(side='right')
-        self._label(threshold_box, '红色阈值', fg=self.MUTED).pack(side='left', padx=(0, 7))
-        threshold = tk.Spinbox(
-            threshold_box, from_=0, to=27, increment=0.5, width=5,
-            textvariable=self._enhancement_threshold_var, justify='center',
-            command=self._on_enhancement_settings_changed,
-            bg=self.FIELD, fg=self.TEXT, buttonbackground='#e8eef6',
-            relief='flat', bd=0, highlightthickness=1,
-            highlightbackground='#d7e1ed', highlightcolor='#007aff',
-            font=('Microsoft YaHei UI', 10),
-        )
-        threshold.pack(side='left')
-        self._label(threshold_box, '%', fg=self.MUTED).pack(side='left', padx=(4, 0))
-        threshold.bind('<Return>', self._on_enhancement_settings_changed)
-        threshold.bind('<FocusOut>', lambda event: self._on_enhancement_settings_changed(event, show_error=False))
+        self._label(threshold_box, '红色词条', fg=self.MUTED).pack(side='left', padx=(0, 7))
+        self._segment(
+            threshold_box, self._enhancement_threshold_var,
+            [('≥10%', '10'), ('≥15%', '15'), ('≥20%', '20'), ('=27%', '27')],
+            self._on_enhancement_settings_changed,
+        ).pack(side='left')
         self._threshold_note_var = tk.StringVar()
         self._enhancement_threshold_var.trace_add('write', self._update_threshold_note)
         self._update_threshold_note()
@@ -333,7 +376,7 @@ class ImprintDecomposeUI(BaseUI):
         action.pack(fill='x', pady=(4, 0))
         action.bind('<Configure>', lambda e: action.configure(wraplength=max(200, e.width-8)))
 
-        stats = self._panel(outer, '颜色统计')
+        stats = self._panel(outer, '本次刻印分解统计')
         strip = tk.Frame(stats, bg=self.CARD)
         strip.pack(fill='x', pady=(0, 12))
         for element in ELEMENT_ORDER:
@@ -348,7 +391,7 @@ class ImprintDecomposeUI(BaseUI):
             except (FileNotFoundError, OSError, KeyError):
                 self._label(cell, element, fg=self.MUTED).pack(side='left')
             self._label(cell, '', textvariable=var, size=14, bold=True).pack(side='left', padx=(4, 0))
-        self._label(stats, '颜色组合', fg=self.MUTED).pack(anchor='w')
+        self._label(stats, '组合', fg=self.MUTED).pack(anchor='w')
         self._combination_text = self._text(stats)
         self._label(outer, f'作者：{__author__}   ·   v{__version__}', fg=self.MUTED,
                     bg=self.BG, size=9).pack(side='bottom', anchor='e')

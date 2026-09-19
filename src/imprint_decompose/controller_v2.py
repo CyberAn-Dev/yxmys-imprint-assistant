@@ -2,14 +2,78 @@
 
 import time
 
-from .controller import BotError, ImprintDecomposeController as BaseController
+import win32gui
+
+from .controller import (
+    BotError,
+    ImprintDecomposeController as BaseController,
+    Rect,
+    WindowInfo,
+    WindowLocator,
+)
+
+
+class ImprintWindowLocator(WindowLocator):
+    """Prefer the portrait game window; adapt a maximized wide host window."""
+
+    def find(self):
+        window_cfg = self.cfg['window']
+        title_key = str(window_cfg['title_contains'])
+        min_w = int(window_cfg['minimum_width'])
+        min_h = int(window_cfg['minimum_height'])
+        expected = float(window_cfg['reference_width']) / float(window_cfg['reference_height'])
+        tolerance = float(window_cfg.get('aspect_ratio_tolerance', 0.05))
+        natural = []
+        wide = []
+
+        def callback(hwnd, _):
+            if not win32gui.IsWindowVisible(hwnd) or win32gui.IsIconic(hwnd):
+                return
+            title = win32gui.GetWindowText(hwnd) or ''
+            if title_key not in title or '刻印快速筛选分解小助手' in title:
+                return
+            left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+            rect = Rect(left, top, right, bottom)
+            if rect.width < min_w or rect.height < min_h:
+                return
+            info = WindowInfo(hwnd=hwnd, title=title, rect=rect)
+            ratio_error = abs(rect.width / rect.height - expected) / expected
+            if ratio_error <= tolerance:
+                natural.append(info)
+            elif rect.width / rect.height > expected:
+                wide.append(info)
+
+        win32gui.EnumWindows(callback, None)
+        if natural:
+            best = max(natural, key=lambda item: item.rect.area)
+        elif wide:
+            source = max(wide, key=lambda item: item.rect.area)
+            viewport_width = max(min_w, round(source.rect.height * expected))
+            viewport_width = min(viewport_width, source.rect.width)
+            inset = (source.rect.width - viewport_width) // 2
+            best = WindowInfo(
+                hwnd=source.hwnd,
+                title=source.title,
+                rect=Rect(
+                    source.rect.left + inset,
+                    source.rect.top,
+                    source.rect.left + inset + viewport_width,
+                    source.rect.bottom,
+                ),
+            )
+        else:
+            self._last_hwnd = None
+            return None
+        self._last_hwnd = best.hwnd
+        return best
 
 
 def enhancement_keep_reason(values, unreadable, threshold, originals, current):
     """Return a keep reason only when the configured rule is satisfied."""
-    qualifying = tuple(value for value in values if value > threshold)
+    qualifying = tuple(value for value in values if value >= threshold)
     if qualifying:
-        return f'红色词条 {max(qualifying):g}% > {threshold:g}%'
+        operator = '=' if threshold == 27 else '≥'
+        return f'红色词条 {max(qualifying):g}% {operator} {threshold:g}%'
     if unreadable:
         return '红色词条数值无法确认'
     if originals and current.issubset(originals):
@@ -18,6 +82,13 @@ def enhancement_keep_reason(values, unreadable, threshold, originals, current):
 
 
 class ImprintDecomposeController(BaseController):
+    def __init__(self, cfg, feature_cfg, *, dry_run=False, on_stats=None):
+        super().__init__(cfg, feature_cfg, dry_run=dry_run, on_stats=on_stats)
+        self.locator = ImprintWindowLocator(cfg)
+        self.input.locator = self.locator
+        self._enhancement_red_threshold = 20.0
+        self._update_enhancement_status()
+
     def _reset_enhancement_session(self):
         self._result_signature = None
         self._result_seen = 0
