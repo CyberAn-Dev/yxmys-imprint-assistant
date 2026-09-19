@@ -1,4 +1,4 @@
-"""Version 2.5 fixed Apple-inspired presentation."""
+"""Version 2.5.1 fixed Apple-inspired presentation."""
 import copy
 import queue
 import re

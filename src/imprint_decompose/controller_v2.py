@@ -81,6 +81,14 @@ def enhancement_keep_reason(values, unreadable, threshold, originals, current):
     return None
 
 
+def enhancement_slot_plan(filled_count, target):
+    """Return (existing rounds, remaining clicks, protect as over-target)."""
+    target = max(1, min(3, int(target)))
+    filled_count = max(2, min(5, int(filled_count)))
+    existing = filled_count - 2
+    return existing, max(0, target - existing), existing > target
+
+
 class ImprintDecomposeController(BaseController):
     def __init__(self, cfg, feature_cfg, *, dry_run=False, on_stats=None):
         super().__init__(cfg, feature_cfg, dry_run=dry_run, on_stats=on_stats)
@@ -93,6 +101,8 @@ class ImprintDecomposeController(BaseController):
         self._result_signature = None
         self._result_seen = 0
         self._initial_existing_enhancements = None
+        self._initial_detail_signature = None
+        self._initial_detail_seen = 0
         return super()._reset_enhancement_session()
 
     def _handle_detail(self, window, frame, analysis):
@@ -106,16 +116,51 @@ class ImprintDecomposeController(BaseController):
                 slot.element for slot in detail.right_slots[:2]
                 if slot.active and slot.element
             )
+            initial_signature = (
+                detail.right_filled_count,
+                tuple(detail.right_combination),
+                original_elements,
+            )
+            if initial_signature != self._initial_detail_signature:
+                self._initial_detail_signature = initial_signature
+                self._initial_detail_seen = 1
+                self.stats.last_action = '正在确认已有强化次数与元素颜色'
+                self._emit_stats()
+                return
+            self._initial_detail_seen += 1
+            if self._initial_detail_seen < 2:
+                return
+            if detail.right_filled_count < 2 or len(original_elements) < 2:
+                self.stats.last_action = '等待初始两个元素识别稳定'
+                self._emit_stats()
+                return
+
             self._ensure_enhancement_session(
                 detail.right_combination,
                 original_elements=original_elements,
             )
-            existing = max(0, min(3, detail.right_filled_count - 2))
+            target, _ = self._enhancement_progress()
+            existing, remaining, over_target = enhancement_slot_plan(
+                detail.right_filled_count, target,
+            )
             self._initial_existing_enhancements = existing
             self._enhancement_completed = existing
             self.stats.enhancement_completed = existing
             if existing:
-                self.stats.last_action = f'检测到已强化 {existing} 次，按当前槽位继续判断'
+                expected_slots = 2 + target
+                if over_target:
+                    self.stats.last_action = (
+                        f'检测到 {detail.right_filled_count}/5 个槽位，'
+                        f'超过目标 {expected_slots}/5，进入保护判断'
+                    )
+                elif remaining:
+                    self.stats.last_action = (
+                        f'检测到已强化 {existing} 次，还需强化 {remaining} 次'
+                    )
+                else:
+                    self.stats.last_action = (
+                        f'检测到已强化 {existing} 次，已达到当前目标'
+                    )
                 self._update_enhancement_status(analysis)
                 self._emit_stats()
                 self._phase_since = time.monotonic() - 0.5
