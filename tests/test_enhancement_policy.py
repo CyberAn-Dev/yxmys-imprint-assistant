@@ -52,7 +52,16 @@ class EnhancementSlotPlanTests(unittest.TestCase):
             ('storm', 'storm'),
             ('storm', 'storm', 'arc', 'arc'),
         )
-        self.assertIn('重复颜色', reason)
+        self.assertIn('新增一种颜色', reason)
+
+    def test_duplicate_original_elements_with_two_new_colors_are_not_kept(self):
+        self.assertIsNone(
+            enhancement_keep_reason(
+                (), 0, 20.0,
+                ('storm', 'storm'),
+                ('storm', 'storm', 'arc', 'earth'),
+            )
+        )
 
     def test_below_threshold_red_value_cannot_use_color_rule(self):
         self.assertIsNone(

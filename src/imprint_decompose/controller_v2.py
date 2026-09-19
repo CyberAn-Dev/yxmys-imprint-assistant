@@ -85,9 +85,11 @@ def enhancement_keep_reason(values, unreadable, threshold, originals, current):
 
     original_elements = tuple(originals or ())
     original_set = set(original_elements)
-    if len(original_elements) >= 2 and len(original_set) == 1:
-        return '原始组合为重复颜色，忽略强化新增颜色'
-    if original_set and set(current or ()).issubset(original_set):
+    current_set = set(current or ())
+    if (original_set and original_set.issubset(current_set)
+            and len(current_set) <= 2):
+        if len(original_set) == 1 and len(current_set) == 2:
+            return '原始组合为重复颜色，强化后仅新增一种颜色'
         return '强化后没有第三种元素颜色'
     return None
 
