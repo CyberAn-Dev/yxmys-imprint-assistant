@@ -50,6 +50,7 @@ foreach ($dllName in @('tcl86t.dll', 'tk86t.dll')) {
     --additional-hooks-dir $hooks `
     --add-data "$(Join-Path $project 'config\default.yaml');config" `
     --add-data "$(Join-Path $source 'imprint_decompose\default.yaml');imprint_decompose" `
+    --add-data "$(Join-Path $source 'imprint_decompose\game_digit_templates.npz');imprint_decompose" `
     --add-data "$(Join-Path $source 'imprint_decompose\element_icons');imprint_decompose\element_icons" `
     --add-data "$icon;assets" `
     --add-data "$coffeeQr;assets" `

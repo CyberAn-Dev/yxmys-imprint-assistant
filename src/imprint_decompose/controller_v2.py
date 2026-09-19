@@ -4,6 +4,7 @@ import time
 
 import win32gui
 
+from .game_digit_templates import install_game_digit_templates
 from .controller import (
     BotError,
     ImprintDecomposeController as BaseController,
@@ -94,6 +95,7 @@ class ImprintDecomposeController(BaseController):
         super().__init__(cfg, feature_cfg, dry_run=dry_run, on_stats=on_stats)
         self.locator = ImprintWindowLocator(cfg)
         self.input.locator = self.locator
+        install_game_digit_templates(self.detector)
         self._enhancement_red_threshold = 20.0
         self._update_enhancement_status()
 

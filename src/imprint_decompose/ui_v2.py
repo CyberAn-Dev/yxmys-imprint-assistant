@@ -1,4 +1,4 @@
-"""Version 2.8 fixed Apple-inspired presentation."""
+"""Version 2.9 fixed Apple-inspired presentation."""
 import copy
 from datetime import datetime
 import queue
