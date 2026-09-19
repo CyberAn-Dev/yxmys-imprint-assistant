@@ -46,6 +46,18 @@ class WindowUsageStatusTests(unittest.TestCase):
             ('当前无法使用', False),
         )
 
+    def test_current_resolution_is_displayed_from_detected_window(self):
+        self.assertEqual(
+            self.ui._format_current_resolution('511×940 px（比例正常，缩放≈0.93x）'),
+            '当前分辨率：511×940',
+        )
+
+    def test_current_resolution_is_unknown_without_window(self):
+        self.assertEqual(
+            self.ui._format_current_resolution('-'),
+            '当前分辨率：—',
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

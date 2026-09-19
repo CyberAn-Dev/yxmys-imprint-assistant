@@ -107,7 +107,7 @@ class ImprintDecomposeUI(BaseUI):
         self.root.attributes('-alpha', 1.0)
         # Keep a fixed desktop layout, but reserve enough vertical space for
         # the complete statistics card and footer at normal Windows DPI.
-        self.root.geometry('760x940')
+        self.root.geometry('760x960')
         self.root.resizable(False, False)
         self._apply_stats(controller.stats)
         self.root.after(80, self._drain)
@@ -132,7 +132,8 @@ class ImprintDecomposeUI(BaseUI):
         mapping = {
             'program_status': stats.program_status,
             'window_status': stats.window_status,
-            'current_resolution': usage_status,
+            'current_resolution': self._format_current_resolution(stats.window_size),
+            'usage_status': usage_status,
             'last_action': self._friendly_action(stats.last_action),
             'total_decomposed': str(stats.total_decomposed),
             'total_kept': str(stats.total_kept),
@@ -210,6 +211,14 @@ class ImprintDecomposeUI(BaseUI):
             and ratio_error <= float(cfg.get('aspect_ratio_tolerance', 0.05))
         )
         return ('当前可以使用' if usable else '当前无法使用'), usable
+
+    @staticmethod
+    def _format_current_resolution(size_text):
+        match = re.search(r'(\d+)\s*[×xX]\s*(\d+)', str(size_text or ''))
+        if not match:
+            return '当前分辨率：—'
+        width, height = match.groups()
+        return f'当前分辨率：{width}×{height}'
 
     @staticmethod
     def _friendly_action(value):
@@ -416,9 +425,14 @@ class ImprintDecomposeUI(BaseUI):
         suggestion = f"建议分辨率：{reference['reference_width']}×{reference['reference_height']}"
         self._label(status, suggestion, fg=self.MUTED,
                     bg=self.BG, size=9, anchor='e').pack(anchor='e')
-        self._vars['current_resolution'] = tk.StringVar(value='当前无法使用')
+        self._vars['current_resolution'] = tk.StringVar(value='当前分辨率：—')
+        self._label(
+            status, '', textvariable=self._vars['current_resolution'], fg=self.MUTED,
+            bg=self.BG, size=9, anchor='e',
+        ).pack(anchor='e')
+        self._vars['usage_status'] = tk.StringVar(value='当前无法使用')
         self._usage_status_label = self._label(
-            status, '', textvariable=self._vars['current_resolution'], fg='#ff3b30',
+            status, '', textvariable=self._vars['usage_status'], fg='#ff3b30',
             bg=self.BG, size=9, bold=True, anchor='e',
         )
         self._usage_status_label.pack(anchor='e')
