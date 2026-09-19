@@ -58,6 +58,15 @@ class WindowUsageStatusTests(unittest.TestCase):
             '当前分辨率：—',
         )
 
+    def test_combination_summary_hides_combination_details(self):
+        self.assertEqual(
+            self.ui._format_combination_summary({'storm + arc': 2, 'flame': 1}),
+            '组合种类：2    合计：3',
+        )
+
+    def test_empty_combination_summary_is_placeholder(self):
+        self.assertEqual(self.ui._format_combination_summary({}), '—')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -177,8 +177,9 @@ class ImprintDecomposeUI(BaseUI):
 
         self._combination_text.configure(state='normal')
         self._combination_text.delete('1.0', 'end')
-        lines = [f'{label}  ×  {count}' for label, count in stats.combination_counts.items()]
-        self._combination_text.insert('1.0', '\n'.join(lines) or '—')
+        self._combination_text.insert(
+            '1.0', self._format_combination_summary(stats.combination_counts)
+        )
         self._combination_text.configure(state='disabled')
 
         error = (stats.last_error or '').strip()
@@ -221,6 +222,17 @@ class ImprintDecomposeUI(BaseUI):
             return '当前分辨率：—'
         width, height = match.groups()
         return f'当前分辨率：{width}×{height}'
+
+    @staticmethod
+    def _format_combination_summary(combination_counts):
+        counts = {
+            label: int(count)
+            for label, count in (combination_counts or {}).items()
+            if int(count) > 0
+        }
+        if not counts:
+            return '—'
+        return f'组合种类：{len(counts)}    合计：{sum(counts.values())}'
 
     @staticmethod
     def _friendly_action(value):

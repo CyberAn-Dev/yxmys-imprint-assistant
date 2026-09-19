@@ -33,6 +33,10 @@ class EnhancementSlotPlanTests(unittest.TestCase):
             enhancement_keep_reason((12.0,), 0, 20.0, originals,
                                     {'storm', 'arc', 'earth'})
         )
+        self.assertIsNone(
+            enhancement_keep_reason((12.0,), 0, 20.0,
+                                    ('storm', 'arc'), ('storm', 'arc'))
+        )
         self.assertIn(
             '20', enhancement_keep_reason((20.0,), 0, 20.0, originals,
                                           {'storm', 'arc', 'earth'})
@@ -40,6 +44,22 @@ class EnhancementSlotPlanTests(unittest.TestCase):
         self.assertIn(
             '第三种', enhancement_keep_reason((), 0, 20.0, originals,
                                                {'storm', 'arc'})
+        )
+
+    def test_duplicate_original_elements_ignore_new_color(self):
+        reason = enhancement_keep_reason(
+            (), 0, 20.0,
+            ('storm', 'storm'),
+            ('storm', 'storm', 'arc', 'arc'),
+        )
+        self.assertIn('重复颜色', reason)
+
+    def test_below_threshold_red_value_cannot_use_color_rule(self):
+        self.assertIsNone(
+            enhancement_keep_reason(
+                (12.0,), 0, 20.0,
+                ('storm', 'arc'), ('storm', 'arc'),
+            )
         )
 
     def test_red_threshold_match_is_counted_once_per_detail_session(self):

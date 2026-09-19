@@ -77,7 +77,17 @@ def enhancement_keep_reason(values, unreadable, threshold, originals, current):
         return f'红色词条 {max(qualifying):g}% {operator} {threshold:g}%'
     if unreadable:
         return '红色词条数值无法确认'
-    if originals and current.issubset(originals):
+
+    # A detected red value that is below the threshold must not be rescued by
+    # the color-combination rule.
+    if values:
+        return None
+
+    original_elements = tuple(originals or ())
+    original_set = set(original_elements)
+    if len(original_elements) >= 2 and len(original_set) == 1:
+        return '原始组合为重复颜色，忽略强化新增颜色'
+    if original_set and set(current or ()).issubset(original_set):
         return '强化后没有第三种元素颜色'
     return None
 
@@ -214,8 +224,8 @@ class ImprintDecomposeController(BaseController):
                 return
 
             if completed >= target:
-                originals = set(self._enhancement_original_elements or ())
-                current = set(detail.right_combination)
+                originals = tuple(self._enhancement_original_elements or ())
+                current = tuple(detail.right_combination)
                 threshold = float(self.stats.red_attribute_threshold)
                 unreadable = analysis.red_attribute_unreadable_count
                 initial_existing = self._initial_existing_enhancements or 0
