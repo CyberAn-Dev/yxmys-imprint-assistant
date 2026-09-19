@@ -1,4 +1,4 @@
-"""Version 2.5.2 fixed Apple-inspired presentation."""
+"""Version 2.6 fixed Apple-inspired presentation."""
 import copy
 import queue
 import re
@@ -104,7 +104,7 @@ class ImprintDecomposeUI(BaseUI):
         self._set_window_icon()
         self.root.report_callback_exception = self._on_callback_error
         self.root.attributes('-alpha', 1.0)
-        self.root.geometry('760x940')
+        self.root.geometry('760x820')
         self.root.resizable(False, False)
         self._apply_stats(controller.stats)
         self.root.after(80, self._drain)
@@ -231,6 +231,34 @@ class ImprintDecomposeUI(BaseUI):
             except tk.TclError:
                 pass
 
+    def _show_coffee_qr(self, _event=None):
+        base = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[2]))
+        qr_path = base / 'assets' / 'wechat_pay.jpg'
+        if not qr_path.exists():
+            self._vars['last_action'].set('未找到收款码图片')
+            return
+
+        popup = tk.Toplevel(self.root)
+        popup.title('请我喝一杯咖啡')
+        popup.configure(bg=self.BG)
+        popup.resizable(False, False)
+        popup.transient(self.root)
+        self._label(
+            popup, '☕ 谢谢你的支持', size=14, bold=True, bg=self.BG,
+        ).pack(pady=(14, 8))
+        with Image.open(qr_path) as source:
+            image = source.convert('RGB')
+            image.thumbnail((390, 470), Image.Resampling.LANCZOS)
+        popup._coffee_image = ImageTk.PhotoImage(image, master=popup)
+        tk.Label(popup, image=popup._coffee_image, bg=self.BG).pack(padx=16)
+        self._label(
+            popup, '微信扫码即可支持作者', fg=self.MUTED, bg=self.BG, size=9,
+        ).pack(pady=(8, 14))
+        popup.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - popup.winfo_width()) // 2
+        y = self.root.winfo_rooty() + max(20, (self.root.winfo_height() - popup.winfo_height()) // 2)
+        popup.geometry(f'+{x}+{y}')
+
     def _update_threshold_note(self, *_args):
         if not hasattr(self, '_threshold_note_var'):
             return
@@ -269,11 +297,11 @@ class ImprintDecomposeUI(BaseUI):
         return ImageTk.PhotoImage(icon, master=self.root)
 
     def _panel(self, parent, title):
-        frame = tk.Frame(parent, bg=self.CARD, padx=18, pady=12,
+        frame = tk.Frame(parent, bg=self.CARD, padx=16, pady=8,
                          highlightbackground='#dedee3', highlightthickness=1)
-        frame.pack(fill='x', pady=(0, 12))
+        frame.pack(fill='x', pady=(0, 8))
         if title:
-            self._label(frame, title, size=12, bold=True).pack(anchor='w', pady=(0, 8))
+            self._label(frame, title, size=12, bold=True).pack(anchor='w', pady=(0, 5))
         return frame
 
     def _segment(self, parent, variable, choices, command):
@@ -313,9 +341,27 @@ class ImprintDecomposeUI(BaseUI):
 
     def _build(self):
         outer = tk.Frame(self.root, bg=self.BG)
-        outer.pack(fill='both', expand=True, padx=22, pady=(16, 12))
+        outer.pack(fill='both', expand=True, padx=18, pady=(10, 8))
+
+        # Pack the footer first so it always reserves space at the bottom.
+        footer = tk.Frame(outer, bg=self.BG)
+        footer.pack(side='bottom', fill='x', pady=(3, 0))
+        coffee = self._label(
+            footer, '☕ 如果你觉得这个工具不错，可以请我喝一杯咖啡',
+            fg='#007aff', bg=self.BG, size=9, cursor='hand2',
+        )
+        coffee.configure(font=('Microsoft YaHei UI', 9, 'underline'))
+        coffee.pack(anchor='center', pady=(0, 3))
+        coffee.bind('<Button-1>', self._show_coffee_qr)
+        footer_meta = tk.Frame(footer, bg=self.BG)
+        footer_meta.pack(fill='x')
+        self._label(footer_meta, '仅供开发交流 · 非盈利 · 开源非商业使用', fg=self.MUTED,
+                    bg=self.BG, size=9).pack(side='left')
+        self._label(footer_meta, f'作者：{__author__}   ·   v{__version__}', fg=self.MUTED,
+                    bg=self.BG, size=9).pack(side='right')
+
         head = tk.Frame(outer, bg=self.BG)
-        head.pack(fill='x', pady=(0, 12))
+        head.pack(fill='x', pady=(0, 7))
         self._label(head, APP_NAME, size=17, bold=True, bg=self.BG).pack(side='left')
         status = tk.Frame(head, bg=self.BG)
         status.pack(side='right')
@@ -333,7 +379,7 @@ class ImprintDecomposeUI(BaseUI):
         self._label(status, '', textvariable=self._vars['current_resolution'], fg=self.MUTED,
                     bg=self.BG, size=9, anchor='e').pack(anchor='e')
         toolbar = tk.Frame(outer, bg=self.BG)
-        toolbar.pack(fill='x', pady=(0, 14))
+        toolbar.pack(fill='x', pady=(0, 8))
         for text, command, color, hover, fg in (
             ('开始  F9', self.controller.start, '#0071e3', '#0077ed', 'white'),
             ('暂停', self.controller.pause, '#ffffff', '#e5e5ea', self.TEXT),
@@ -342,10 +388,10 @@ class ImprintDecomposeUI(BaseUI):
                           bg=color, hover_bg=hover, fg=fg).pack(side='left', padx=(0, 10))
 
         reminder = tk.Frame(
-            outer, bg='#fff8e6', padx=14, pady=9,
+            outer, bg='#fff8e6', padx=14, pady=7,
             highlightbackground='#ffd27a', highlightthickness=1,
         )
-        reminder.pack(fill='x', pady=(0, 12))
+        reminder.pack(fill='x', pady=(0, 8))
         self._label(
             reminder, '使用前请手动勾选“本次登录不再提醒”',
             fg='#a65f00', bg='#fff8e6', size=10, bold=True,
@@ -357,14 +403,14 @@ class ImprintDecomposeUI(BaseUI):
         self._label(line, '分解确认', bold=True).pack(side='left')
         ConfirmationSwitch(line, self._confirmation_mode_var,
                            self._on_confirmation_mode_changed).pack(side='right')
-        tk.Frame(settings, bg='#e5e5ea', height=1).pack(fill='x', pady=12)
+        tk.Frame(settings, bg='#e5e5ea', height=1).pack(fill='x', pady=8)
         line = tk.Frame(settings, bg=self.CARD)
         line.pack(fill='x')
         self._label(line, '自动强化', bold=True).pack(side='left')
         EnhancementSwitch(line, self._enhancement_enabled_var,
                           self._on_enhancement_settings_changed).pack(side='right')
         options = tk.Frame(settings, bg=self.CARD)
-        options.pack(fill='x', pady=(10, 0))
+        options.pack(fill='x', pady=(7, 0))
         self._segment(options, self._enhancement_rounds_var,
                       [('1 次', '1'), ('2 次', '2'), ('3 次', '3')],
                       self._on_enhancement_settings_changed).pack(side='left')
@@ -380,7 +426,7 @@ class ImprintDecomposeUI(BaseUI):
         self._enhancement_threshold_var.trace_add('write', self._update_threshold_note)
         self._update_threshold_note()
         self._label(settings, '', textvariable=self._threshold_note_var,
-                    fg=self.MUTED, size=9).pack(anchor='e', pady=(8, 0))
+                    fg=self.MUTED, size=9).pack(anchor='e', pady=(5, 0))
 
         metrics = self._panel(outer, '')
         for i, (title, key) in enumerate((('已分解', 'total_decomposed'), ('已保留', 'total_kept'), ('强化次数', 'enhancement_clicks'))):
@@ -413,7 +459,7 @@ class ImprintDecomposeUI(BaseUI):
 
         stats = self._panel(outer, '本次刻印分解统计')
         strip = tk.Frame(stats, bg=self.CARD)
-        strip.pack(fill='x', pady=(0, 12))
+        strip.pack(fill='x', pady=(0, 6))
         for element in ELEMENT_ORDER:
             var = tk.StringVar(value='0')
             self._element_vars[element] = var
@@ -428,17 +474,11 @@ class ImprintDecomposeUI(BaseUI):
             self._label(cell, '', textvariable=var, size=14, bold=True).pack(side='left', padx=(4, 0))
         self._label(stats, '组合', fg=self.MUTED).pack(anchor='w')
         self._combination_text = self._text(stats)
-        footer = tk.Frame(outer, bg=self.BG)
-        footer.pack(side='bottom', fill='x', pady=(1, 0))
-        self._label(footer, '仅供开发交流 · 非盈利 · 开源非商业使用', fg=self.MUTED,
-                    bg=self.BG, size=9).pack(side='left')
-        self._label(footer, f'作者：{__author__}   ·   v{__version__}', fg=self.MUTED,
-                    bg=self.BG, size=9).pack(side='right')
 
     def _text(self, parent):
         scroll = ttk.Scrollbar(parent)
         scroll.pack(side='right', fill='y')
-        widget = tk.Text(parent, height=3, bg=self.CARD, fg=self.TEXT, relief='flat',
+        widget = tk.Text(parent, height=2, bg=self.CARD, fg=self.TEXT, relief='flat',
                          font=('Microsoft YaHei UI', 10), wrap='word', state='disabled',
                          highlightthickness=0, padx=4, pady=4, yscrollcommand=scroll.set)
         widget.pack(fill='both', expand=True)

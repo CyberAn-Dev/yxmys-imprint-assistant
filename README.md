@@ -50,3 +50,11 @@ UI、增强判断覆盖层和错误日志模块已有可读源码。早期识别
 
 作者：CyberAn
 
+## 支持作者
+
+如果你觉得这个工具不错，可以请我喝一杯咖啡 ☕
+
+点击下面的收款码图片可以查看原图：
+
+<a href="assets/wechat_pay.jpg"><img src="assets/wechat_pay.jpg" alt="微信收款码" width="320"></a>
+

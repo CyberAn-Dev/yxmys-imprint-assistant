@@ -18,6 +18,7 @@ $release = Join-Path $project 'release'
 $work = Join-Path $project 'build'
 $name = "yxmys-刻印快速筛选分解小助手-v$version"
 $icon = Join-Path $project 'assets\app_icon.ico'
+$coffeeQr = Join-Path $project 'assets\wechat_pay.jpg'
 $hooks = Join-Path $project 'packaging_hooks'
 New-Item -ItemType Directory -Force $release | Out-Null
 
@@ -51,6 +52,7 @@ foreach ($dllName in @('tcl86t.dll', 'tk86t.dll')) {
     --add-data "$(Join-Path $source 'imprint_decompose\default.yaml');imprint_decompose" `
     --add-data "$(Join-Path $source 'imprint_decompose\element_icons');imprint_decompose\element_icons" `
     --add-data "$icon;assets" `
+    --add-data "$coffeeQr;assets" `
     (Join-Path $source 'imprint_decompose_entry.py')
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed.' }
 
