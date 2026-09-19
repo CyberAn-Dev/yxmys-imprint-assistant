@@ -193,9 +193,11 @@ class ImprintDecomposeUI(BaseUI):
             flags=re.IGNORECASE,
         )
         window_found = bool(window_match and int(window_match.group(1)) > 0)
-        visual_state = str(vision_state or '').strip().upper()
-        visual_found = visual_state not in {'', '-', 'UNKNOWN', 'NONE'}
-        if not window_found or not visual_found:
+        # Availability here answers whether the detected game window is ready
+        # by geometry. The actual imprint-page visual state is checked by the
+        # controller before any action, so being on the game home screen must
+        # not keep a valid game window marked as unusable.
+        if not window_found:
             return '当前无法使用', False
 
         match = re.search(r'(\d+)\s*[×xX]\s*(\d+)', str(size_text or ''))

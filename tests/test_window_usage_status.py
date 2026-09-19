@@ -28,10 +28,10 @@ class WindowUsageStatusTests(unittest.TestCase):
             ('当前无法使用', False),
         )
 
-    def test_stale_window_size_without_visual_match_is_not_usable(self):
+    def test_matching_resolution_before_opening_imprint_page_is_usable(self):
         self.assertEqual(
             self.usage('550×1020', '已找到 hwnd=1378598', 'UNKNOWN'),
-            ('当前无法使用', False),
+            ('当前可以使用', True),
         )
 
     def test_valid_window_resolution_and_visual_match_is_usable(self):
