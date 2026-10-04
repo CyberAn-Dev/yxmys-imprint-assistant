@@ -1,4 +1,4 @@
-"""Version 3.2.2 balanced fast-click presentation."""
+"""Single-page control panel with all primary information visible."""
 import copy
 from datetime import datetime
 import queue
@@ -6,7 +6,6 @@ import re
 import sys
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
 
 from PIL import Image, ImageDraw, ImageTk
 
@@ -101,17 +100,24 @@ class ImprintDecomposeUI(BaseUI):
         self._keep_combination = ''
         self._threshold_initialized = False
         super().__init__(controller)
-        self.root.title(APP_NAME)
+        self.root.title(f'{APP_NAME} v{__version__}')
         self._set_window_icon()
         self.root.report_callback_exception = self._on_callback_error
         self.root.attributes('-alpha', 1.0)
-        width = min(780, self.root.winfo_screenwidth() - 60)
-        height = min(900, self.root.winfo_screenheight() - 100)
-        self.root.geometry(f'{width}x{height}')
-        self.root.minsize(min(720, width), min(540, height))
         self.root.resizable(True, True)
         self._apply_stats(controller.stats)
+        self._fit_content(initial=True)
         self.root.after(80, self._drain)
+
+    def _fit_content(self, *, initial=False):
+        self.root.update_idletasks()
+        width = max(780, self._outer.winfo_reqwidth())
+        height = self._outer.winfo_reqheight()
+        self.root.minsize(width, height)
+        if initial:
+            self.root.geometry(f'{width}x{height}')
+        elif self.root.winfo_height() < height:
+            self.root.geometry(f'{max(width, self.root.winfo_width())}x{height}')
 
     def _on_stats_threadsafe(self, stats):
         snapshot = copy.deepcopy(stats)
@@ -187,12 +193,8 @@ class ImprintDecomposeUI(BaseUI):
         else:
             self._keep_alert.place_forget()
 
-        self._combination_text.configure(state='normal')
-        self._combination_text.delete('1.0', 'end')
-        self._combination_text.insert(
-            '1.0', self._format_combination_summary(stats.combination_counts)
-        )
-        self._combination_text.configure(state='disabled')
+        self._combination_var.set(self._format_combination_summary(stats.combination_counts))
+        self._fit_content()
 
         error = (stats.last_error or '').strip()
         if error and error != '-' and error != self._last_error_logged:
@@ -412,19 +414,11 @@ class ImprintDecomposeUI(BaseUI):
         return widget
 
     def _build(self):
-        canvas = tk.Canvas(self.root, bg=self.BG, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(self.root, orient='vertical', command=canvas.yview)
-        scrollbar.pack(side='right', fill='y')
-        canvas.pack(side='left', fill='both', expand=True)
-        canvas.configure(yscrollcommand=scrollbar.set)
-        outer = tk.Frame(canvas, bg=self.BG, padx=18, pady=10)
-        content = canvas.create_window((0, 0), window=outer, anchor='nw')
-        outer.bind('<Configure>', lambda _event: canvas.configure(scrollregion=canvas.bbox('all')))
-        canvas.bind('<Configure>', lambda event: canvas.itemconfigure(content, width=event.width))
-        self.root.bind('<MouseWheel>', lambda event: canvas.yview_scroll(-int(event.delta / 120), 'units'))
+        outer = self._outer = tk.Frame(self.root, bg=self.BG, padx=16, pady=10)
+        outer.pack(fill='both', expand=True)
 
         # Pack the footer first so it always reserves space at the bottom.
-        footer = tk.Frame(outer, bg=self.BG)
+        footer = self._footer = tk.Frame(outer, bg=self.BG)
         footer.pack(side='bottom', fill='x', pady=(3, 0))
         coffee = self._label(
             footer, '☕ 如果你觉得这个工具不错，可以请我喝一杯咖啡',
@@ -447,29 +441,31 @@ class ImprintDecomposeUI(BaseUI):
         self._label(
             head, f'{period}好，祝你出极品刻印', size=15, bold=True, bg=self.BG,
         ).pack(side='left')
-        status = tk.Frame(head, bg=self.BG)
-        status.pack(side='right')
         self._vars['program_status'] = tk.StringVar(value='已停止')
-        self._label(status, '', textvariable=self._vars['program_status'], fg='#007aff',
-                    bg=self.BG, bold=True, anchor='e').pack(anchor='e')
+        self._label(head, '', textvariable=self._vars['program_status'], fg='#007aff',
+                    bg=self.BG, bold=True, anchor='e').pack(side='right')
+        status = tk.Frame(outer, bg=self.BG)
+        status.pack(fill='x', pady=(0, 6))
+        status.columnconfigure(0, weight=1)
+        status.columnconfigure(1, weight=1)
         self._vars['window_status'] = tk.StringVar(value='未找到窗口')
         self._label(status, '', textvariable=self._vars['window_status'], fg=self.MUTED,
-                    bg=self.BG, size=9, anchor='e').pack(anchor='e')
+                    bg=self.BG, size=9, anchor='w').grid(row=0, column=0, sticky='w')
         reference = self.controller.cfg['window']
         suggestion = f"建议分辨率：{reference['reference_width']}×{reference['reference_height']}"
         self._label(status, suggestion, fg=self.MUTED,
-                    bg=self.BG, size=9, anchor='e').pack(anchor='e')
+                    bg=self.BG, size=9, anchor='w').grid(row=1, column=0, sticky='w')
         self._vars['current_resolution'] = tk.StringVar(value='当前分辨率：—')
         self._label(
             status, '', textvariable=self._vars['current_resolution'], fg=self.MUTED,
             bg=self.BG, size=9, anchor='e',
-        ).pack(anchor='e')
+        ).grid(row=1, column=1, sticky='e')
         self._vars['usage_status'] = tk.StringVar(value='当前无法使用')
         self._usage_status_label = self._label(
             status, '', textvariable=self._vars['usage_status'], fg='#ff3b30',
             bg=self.BG, size=9, bold=True, anchor='e',
         )
-        self._usage_status_label.pack(anchor='e')
+        self._usage_status_label.grid(row=0, column=1, sticky='e')
         toolbar = tk.Frame(outer, bg=self.BG)
         toolbar.pack(fill='x', pady=(0, 8))
         for text, command, color, hover, fg in (
@@ -478,6 +474,8 @@ class ImprintDecomposeUI(BaseUI):
             ('停止  F10', self.controller.stop, '#ff3b30', '#ff453a', 'white')):
             RoundedButton(toolbar, text=text, command=command, width=132,
                           bg=color, hover_bg=hover, fg=fg).pack(side='left', padx=(0, 10))
+        self._label(toolbar, 'F11 / Esc 紧急暂停', bg=self.BG,
+                    fg=self.MUTED, size=9).pack(side='right')
 
         reminder = tk.Frame(
             outer, bg='#fff8e6', padx=14, pady=7,
@@ -492,15 +490,12 @@ class ImprintDecomposeUI(BaseUI):
         settings = self._panel(outer, '')
         line = tk.Frame(settings, bg=self.CARD)
         line.pack(fill='x')
-        self._label(line, '分解确认', bold=True).pack(side='left')
+        self._label(line, '分解确认', bold=True).pack(side='left', padx=(0, 10))
         ConfirmationSwitch(line, self._confirmation_mode_var,
-                           self._on_confirmation_mode_changed).pack(side='right')
-        tk.Frame(settings, bg='#e5e5ea', height=1).pack(fill='x', pady=8)
-        line = tk.Frame(settings, bg=self.CARD)
-        line.pack(fill='x')
-        self._label(line, '自动强化', bold=True).pack(side='left')
+                           self._on_confirmation_mode_changed).pack(side='left')
         EnhancementSwitch(line, self._enhancement_enabled_var,
                           self._on_enhancement_settings_changed).pack(side='right')
+        self._label(line, '自动强化', bold=True).pack(side='right', padx=(12, 10))
         options = tk.Frame(settings, bg=self.CARD)
         options.pack(fill='x', pady=(7, 0))
         self._segment(options, self._enhancement_rounds_var,
@@ -534,7 +529,13 @@ class ImprintDecomposeUI(BaseUI):
             self._label(cell, '', textvariable=var, size=20, bold=True, fg='#007aff').pack(anchor='w')
             self._label(cell, title, fg=self.MUTED).pack(anchor='w')
 
-        current = self._panel(outer, '')
+        bottom = tk.Frame(outer, bg=self.BG)
+        bottom.pack(fill='x', pady=(0, 8))
+        bottom.columnconfigure(0, weight=1, uniform='bottom')
+        bottom.columnconfigure(1, weight=1, uniform='bottom')
+        current = tk.Frame(bottom, bg=self.CARD, padx=12, pady=8,
+                           highlightbackground='#dedee3', highlightthickness=1)
+        current.grid(row=0, column=0, sticky='nsew', padx=(0, 4))
         current_top = tk.Frame(current, bg=self.CARD)
         current_top.pack(fill='x')
         self._label(current_top, '当前刻印', fg=self.MUTED).pack(side='left')
@@ -551,9 +552,12 @@ class ImprintDecomposeUI(BaseUI):
         self._vars['last_action'] = tk.StringVar(value='等待选卡')
         action = self._label(current, '', textvariable=self._vars['last_action'], fg=self.MUTED, anchor='w', justify='left')
         action.pack(fill='x', pady=(4, 0))
-        action.bind('<Configure>', lambda e: action.configure(wraplength=max(200, e.width-8)))
+        action.configure(wraplength=320)
 
-        stats = self._panel(outer, '本次刻印分解统计')
+        stats = tk.Frame(bottom, bg=self.CARD, padx=12, pady=8,
+                         highlightbackground='#dedee3', highlightthickness=1)
+        stats.grid(row=0, column=1, sticky='nsew', padx=(4, 0))
+        self._label(stats, '本次刻印分解统计', size=11, bold=True).pack(anchor='w', pady=(0, 5))
         strip = tk.Frame(stats, bg=self.CARD)
         strip.pack(fill='x', pady=(0, 6))
         for element in ELEMENT_ORDER:
@@ -568,15 +572,6 @@ class ImprintDecomposeUI(BaseUI):
             except (FileNotFoundError, OSError, KeyError):
                 self._label(cell, element, fg=self.MUTED).pack(side='left')
             self._label(cell, '', textvariable=var, size=14, bold=True).pack(side='left', padx=(4, 0))
-        self._label(stats, '组合', fg=self.MUTED).pack(anchor='w')
-        self._combination_text = self._text(stats)
-
-    def _text(self, parent):
-        scroll = ttk.Scrollbar(parent)
-        scroll.pack(side='right', fill='y')
-        widget = tk.Text(parent, height=2, bg=self.CARD, fg=self.TEXT, relief='flat',
-                         font=('Microsoft YaHei UI', 10), wrap='word', state='disabled',
-                         highlightthickness=0, padx=4, pady=4, yscrollcommand=scroll.set)
-        widget.pack(fill='both', expand=True)
-        scroll.configure(command=widget.yview)
-        return widget
+        self._combination_var = tk.StringVar(value='—')
+        self._label(stats, '', textvariable=self._combination_var,
+                    fg=self.MUTED, size=9, wraplength=320, justify='left').pack(anchor='w')

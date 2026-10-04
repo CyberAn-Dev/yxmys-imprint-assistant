@@ -29,8 +29,26 @@ def run(destination):
         ui._on_enhancement_settings_changed()
         ui.root.update()
         assert '≥' in ui._threshold_note_var.get()
+        import copy
+        sample = copy.deepcopy(controller.stats)
+        sample.current_combination = '风暴 + 烈焰 + 暗影'
+        sample.total_kept = 1
+        ui._apply_stats(sample)
+        ui.root.update()
+        pending = list(ui.root.winfo_children())
+        while pending:
+            widget = pending.pop()
+            pending.extend(widget.winfo_children())
+            assert 'scrollbar' not in widget.winfo_class().lower(), 'main page must not scroll'
+            if widget.winfo_ismapped():
+                assert widget.winfo_rooty() >= ui.root.winfo_rooty(), 'widget above window'
+                assert widget.winfo_rootx() >= ui.root.winfo_rootx(), 'widget left of window'
+                assert widget.winfo_rooty() + widget.winfo_height() <= ui.root.winfo_rooty() + ui.root.winfo_height() + 1, 'widget below window'
+                assert widget.winfo_rootx() + widget.winfo_width() <= ui.root.winfo_rootx() + ui.root.winfo_width() + 1, 'widget right of window'
+        assert ui.root.winfo_height() <= ui.root.winfo_screenheight() - 60, 'window exceeds screen'
         result.update(version=__version__, ui_size=[ui.root.winfo_width(), ui.root.winfo_height()],
-                      model_inference='passed', threshold_settings='passed', success=True)
+                      model_inference='passed', threshold_settings='passed',
+                      single_page_layout='passed', success=True)
     except Exception:
         result['error'] = traceback.format_exc()
     finally:
