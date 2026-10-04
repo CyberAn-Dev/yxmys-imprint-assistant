@@ -29,10 +29,21 @@ def run(destination):
         ui._on_enhancement_settings_changed()
         ui.root.update()
         assert '≥' in ui._threshold_note_var.get()
+        ui._selection_mode_var.set('auto')
+        ui._on_selection_mode_changed()
+        ui.root.update()
+        assert controller.stats.auto_mode and controller.stats.enhancement_enabled
+        assert not controller._auto_enabled, 'legacy traversal must stay disabled'
+        assert not controller.enabled.is_set(), 'changing mode must not start automation'
         import copy
         sample = copy.deepcopy(controller.stats)
         sample.current_combination = '风暴 + 烈焰 + 暗影'
         sample.total_kept = 1
+        sample.auto_phase = '保护暂停'
+        sample.auto_processed = 1600
+        sample.auto_scrolled = 1200
+        sample.auto_pass = 12
+        sample.last_action = '滚轮往返后未恢复同一列表边界，已暂停；请回到刻印列表后重新开始'
         ui._apply_stats(sample)
         ui.root.update()
         pending = list(ui.root.winfo_children())
@@ -48,6 +59,7 @@ def run(destination):
         assert ui.root.winfo_height() <= ui.root.winfo_screenheight() - 60, 'window exceeds screen'
         result.update(version=__version__, ui_size=[ui.root.winfo_width(), ui.root.winfo_height()],
                       model_inference='passed', threshold_settings='passed',
+                      automatic_mode_controls='passed',
                       single_page_layout='passed', success=True)
     except Exception:
         result['error'] = traceback.format_exc()

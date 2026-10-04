@@ -6,6 +6,7 @@ import win32gui
 
 from .game_digit_templates import install_game_digit_templates
 from .digit_ocr_fallback import install_digit_ocr_fallback
+from .auto_controller import AutoControllerMixin
 from .controller import (
     BotError,
     ImprintDecomposeController as BaseController,
@@ -239,7 +240,9 @@ def enhancement_slot_plan(filled_count, target):
     return existing, max(0, target - existing), existing > target
 
 
-class ImprintDecomposeController(BaseController):
+class ImprintDecomposeController(AutoControllerMixin, BaseController):
+    _auto_keep_policy = staticmethod(enhancement_keep_reason)
+
     def __init__(self, cfg, feature_cfg, *, dry_run=False, on_stats=None):
         self._red_threshold_counted = False
         super().__init__(cfg, feature_cfg, dry_run=dry_run, on_stats=on_stats)
@@ -258,6 +261,8 @@ class ImprintDecomposeController(BaseController):
         return red_attribute_meets_threshold(analysis.red_attribute_values, threshold)
 
     def _reset_enhancement_session(self):
+        self._manual_origin_filled = None
+        self._manual_enhancement_sent = False
         self._red_threshold_counted = False
         self._result_signature = None
         self._result_seen = 0
@@ -282,6 +287,11 @@ class ImprintDecomposeController(BaseController):
 
     def _handle_detail(self, window, frame, analysis):
         detail = analysis.detail
+        if detail and detail.right_ready and analysis.dismantle_ready:
+            if detail.right_filled_count == 5 and not getattr(self, '_manual_enhancement_sent', False):
+                raise BotError('原本已有 5 个属性的刻印禁止分解；请返回列表选择未强化刻印')
+            if getattr(self, '_manual_origin_filled', None) is None:
+                self._manual_origin_filled = detail.right_filled_count
         if (not self._enhancement_is_enabled() and detail and detail.right_ready
                 and analysis.dismantle_ready):
             signature = (tuple(detail.right_combination), detail.right_filled_count,
@@ -422,3 +432,15 @@ class ImprintDecomposeController(BaseController):
                     return
 
         return super()._handle_detail(window, frame, analysis)
+
+    def _handle_wait_confirm(self, window, analysis):
+        if getattr(self, '_manual_origin_filled', None) not in (2, 3, 4):
+            raise BotError('缺少本轮初始属性记录，禁止自动确认分解')
+        return super()._handle_wait_confirm(window, analysis)
+
+    def _click_enhancement(self, window, analysis):
+        before = self._enhancement_completed
+        result = super()._click_enhancement(window, analysis)
+        if self._enhancement_completed > before:
+            self._manual_enhancement_sent = True
+        return result

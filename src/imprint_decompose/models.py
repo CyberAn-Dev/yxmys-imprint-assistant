@@ -163,6 +163,9 @@ class ImprintStats:
     auto_filter: str = '未选择组合，全部处理'
     auto_candidates: int = 0
     auto_scrolled: int = 0
+    auto_processed: int = 0
+    auto_pass: int = 1
+    auto_phase: str = '手动选卡'
     last_action: str = '-'
     operation_history: str = '-'
     last_error: str = '-'

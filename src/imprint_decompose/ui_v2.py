@@ -156,6 +156,11 @@ class ImprintDecomposeUI(BaseUI):
             'total_decomposed': str(stats.total_decomposed),
             'total_kept': str(stats.total_kept),
             'red_threshold_matches': str(getattr(stats, 'red_threshold_matches', 0)),
+            'auto_progress': (
+                f'{stats.auto_phase}  ·  已处理 {stats.auto_processed}  ·  本页候选 {stats.auto_candidates}'
+                f'  ·  滚动 {stats.auto_scrolled}  ·  第 {stats.auto_pass} 遍'
+                if stats.auto_mode else '手动选卡：点开刻印后处理；原本已有 5 属性仍受保护'
+            ),
         }
         for key, value in mapping.items():
             self._vars[key].set(value or '—')
@@ -165,6 +170,7 @@ class ImprintDecomposeUI(BaseUI):
         for element in ELEMENT_ORDER:
             self._element_vars[element].set(str(stats.element_counts.get(element, 0)))
         self._enhancement_enabled_var.set(stats.enhancement_enabled)
+        self._selection_mode_var.set('auto' if stats.auto_mode else 'manual')
         self._enhancement_rounds_var.set(str(stats.enhancement_target))
         if not self._threshold_initialized:
             self._enhancement_threshold_var.set(
@@ -339,13 +345,19 @@ class ImprintDecomposeUI(BaseUI):
         value = self._enhancement_threshold_var.get().strip() or '20'
         operator = '≥'
         self._threshold_note_var.set(
-            f'保留：红色词条 {operator} {value}% 或未出现第三种颜色；数值无法确认时暂停'
+            f'保留：红字 {operator} {value}%；无红字时才判断不超过两种颜色；读不清时保护'
         )
+
+    def _on_selection_mode_changed(self):
+        self.controller.set_auto_mode(self._selection_mode_var.get() == 'auto')
+        self._apply_stats(self.controller.stats)
 
     def _on_enhancement_settings_changed(self, _event=None, *, show_error=True):
         result = super()._on_enhancement_settings_changed(
             _event, show_error=show_error
         )
+        self._enhancement_enabled_var.set(self.controller.stats.enhancement_enabled)
+        self._enhancement_rounds_var.set(str(self.controller.stats.enhancement_target))
         self._update_threshold_note()
         return result
 
@@ -371,9 +383,9 @@ class ImprintDecomposeUI(BaseUI):
         return ImageTk.PhotoImage(icon, master=self.root)
 
     def _panel(self, parent, title):
-        frame = tk.Frame(parent, bg=self.CARD, padx=16, pady=8,
+        frame = tk.Frame(parent, bg=self.CARD, padx=16, pady=6,
                          highlightbackground='#dedee3', highlightthickness=1)
-        frame.pack(fill='x', pady=(0, 8))
+        frame.pack(fill='x', pady=(0, 6))
         if title:
             self._label(frame, title, size=12, bold=True).pack(anchor='w', pady=(0, 5))
         return frame
@@ -414,7 +426,7 @@ class ImprintDecomposeUI(BaseUI):
         return widget
 
     def _build(self):
-        outer = self._outer = tk.Frame(self.root, bg=self.BG, padx=16, pady=10)
+        outer = self._outer = tk.Frame(self.root, bg=self.BG, padx=16, pady=8)
         outer.pack(fill='both', expand=True)
 
         # Pack the footer first so it always reserves space at the bottom.
@@ -435,7 +447,7 @@ class ImprintDecomposeUI(BaseUI):
                     bg=self.BG, size=9).pack(side='right')
 
         head = tk.Frame(outer, bg=self.BG)
-        head.pack(fill='x', pady=(0, 7))
+        head.pack(fill='x', pady=(0, 4))
         hour = datetime.now().hour
         period = '早上' if 5 <= hour < 12 else ('下午' if 12 <= hour < 18 else '晚上')
         self._label(
@@ -474,20 +486,29 @@ class ImprintDecomposeUI(BaseUI):
             ('停止  F10', self.controller.stop, '#ff3b30', '#ff453a', 'white')):
             RoundedButton(toolbar, text=text, command=command, width=132,
                           bg=color, hover_bg=hover, fg=fg).pack(side='left', padx=(0, 10))
-        self._label(toolbar, 'F11 / Esc 紧急暂停', bg=self.BG,
+        self._label(toolbar, 'Esc 暂停 · F11 调试', bg=self.BG,
                     fg=self.MUTED, size=9).pack(side='right')
 
         reminder = tk.Frame(
-            outer, bg='#fff8e6', padx=14, pady=7,
+            outer, bg='#fff8e6', padx=14, pady=4,
             highlightbackground='#ffd27a', highlightthickness=1,
         )
-        reminder.pack(fill='x', pady=(0, 8))
+        reminder.pack(fill='x', pady=(0, 6))
         self._label(
             reminder, '使用前请手动勾选“本次登录不再提醒”',
             fg='#a65f00', bg='#fff8e6', size=10, bold=True,
         ).pack(anchor='center')
 
         settings = self._panel(outer, '')
+        selection = tk.Frame(settings, bg=self.CARD)
+        selection.pack(fill='x', pady=(0, 6))
+        self._label(selection, '选卡方式', bold=True).pack(side='left', padx=(0, 10))
+        self._selection_mode_var = tk.StringVar(value='manual')
+        self._segment(selection, self._selection_mode_var,
+                      [('手动选卡', 'manual'), ('自动扫描', 'auto')],
+                      self._on_selection_mode_changed).pack(side='left')
+        self._label(selection, '自动仅处理初始 2 属性 · 原有 3/4/5 跳过',
+                    fg=self.MUTED, size=9).pack(side='right')
         line = tk.Frame(settings, bg=self.CARD)
         line.pack(fill='x')
         self._label(line, '分解确认', bold=True).pack(side='left', padx=(0, 10))
@@ -514,6 +535,9 @@ class ImprintDecomposeUI(BaseUI):
         self._update_threshold_note()
         self._label(settings, '', textvariable=self._threshold_note_var,
                     fg=self.MUTED, size=9).pack(anchor='e', pady=(5, 0))
+        self._vars['auto_progress'] = tk.StringVar(value='手动选卡')
+        self._label(settings, '', textvariable=self._vars['auto_progress'],
+                    fg='#0071e3', size=9).pack(anchor='w', pady=(5, 0))
 
         metrics = self._panel(outer, '')
         for i, (title, key) in enumerate((
@@ -526,8 +550,8 @@ class ImprintDecomposeUI(BaseUI):
             metrics.columnconfigure(i, weight=1, uniform='metric')
             var = tk.StringVar(value='0')
             self._vars[key] = var
-            self._label(cell, '', textvariable=var, size=20, bold=True, fg='#007aff').pack(anchor='w')
-            self._label(cell, title, fg=self.MUTED).pack(anchor='w')
+            self._label(cell, title, fg=self.MUTED).pack(side='left', padx=(0, 10))
+            self._label(cell, '', textvariable=var, size=19, bold=True, fg='#007aff').pack(side='left')
 
         bottom = tk.Frame(outer, bg=self.BG)
         bottom.pack(fill='x', pady=(0, 8))
