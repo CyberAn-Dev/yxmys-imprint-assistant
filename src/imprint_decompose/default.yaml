@@ -1,10 +1,16 @@
 actions:
-  # Keep a short settle time after enhancement; result stability checks remain enabled.
-  cooldown: 0.09
-  enhancement_pause: 0.09
+  # Faster enhancement clicks; slot/result stability checks remain enabled.
+  cooldown: 0.06
+  enhancement_pause: 0.06
+  capture_interval: 0.06
   dismantle_point: [337, 870]
 
 vision:
   # Small red percentage digits are anti-aliased after window scaling.
   red_attribute_digit_min_height: 8
   red_attribute_min_digit_confidence: 0.44
+  # Do not let the card title/rarity row be selected as the element row.
+  # Valid element rows observed at supported scales are about -25..+30 px
+  # from the reference y=355; the old -60 px range admitted red title text.
+  detail_slot_y_search_min_offset: -25
+  detail_slot_y_search_max_offset: 30

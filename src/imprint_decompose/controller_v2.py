@@ -5,6 +5,7 @@ import time
 import win32gui
 
 from .game_digit_templates import install_game_digit_templates
+from .digit_ocr_fallback import install_digit_ocr_fallback
 from .controller import (
     BotError,
     ImprintDecomposeController as BaseController,
@@ -16,6 +17,20 @@ from .controller import (
 
 class ImprintWindowLocator(WindowLocator):
     """Prefer the portrait game window; adapt a maximized wide host window."""
+
+    def _viewport_rect(self, rect):
+        window_cfg = self.cfg['window']
+        expected = float(window_cfg['reference_width']) / float(window_cfg['reference_height'])
+        tolerance = float(window_cfg.get('aspect_ratio_tolerance', 0.05))
+        if rect.width > rect.height * expected * (1 + tolerance):
+            width = min(rect.width, max(int(window_cfg['minimum_width']), round(rect.height * expected)))
+            inset = (rect.width - width) // 2
+            return Rect(rect.left + inset, rect.top, rect.left + inset + width, rect.bottom)
+        return rect
+
+    def current_rect(self, hwnd):
+        # Capture and input must use the same viewport, including after a move.
+        return self._viewport_rect(super().current_rect(hwnd))
 
     def find(self):
         window_cfg = self.cfg['window']
@@ -49,32 +64,154 @@ class ImprintWindowLocator(WindowLocator):
             best = max(natural, key=lambda item: item.rect.area)
         elif wide:
             source = max(wide, key=lambda item: item.rect.area)
-            viewport_width = max(min_w, round(source.rect.height * expected))
-            viewport_width = min(viewport_width, source.rect.width)
-            inset = (source.rect.width - viewport_width) // 2
             best = WindowInfo(
                 hwnd=source.hwnd,
                 title=source.title,
-                rect=Rect(
-                    source.rect.left + inset,
-                    source.rect.top,
-                    source.rect.left + inset + viewport_width,
-                    source.rect.bottom,
-                ),
+                rect=self._viewport_rect(source.rect),
             )
         else:
             self._last_hwnd = None
             return None
+        best = WindowInfo(hwnd=best.hwnd, title=best.title, rect=self._viewport_rect(best.rect))
         self._last_hwnd = best.hwnd
         return best
+
+
+def _slot_alignment_quality(slots, slot_y, nominal_y):
+    """Score a candidate slot row without rewarding weak false positives."""
+    known = sum(1 for slot in slots if slot.active and slot.element)
+    unknown = sum(1 for slot in slots if slot.active and not slot.element)
+    strength = sum(
+        float(slot.active_ratio)
+        for slot in slots
+        if slot.active and slot.element
+    )
+    # A row far from the configured element row is usually a decorative icon or
+    # a text row.  Keep a small tolerance for window scaling, then penalize a
+    # distant row sharply so a red title cannot beat two real element slots.
+    distance = abs(int(slot_y) - int(nominal_y))
+    distance_penalty = (
+        0.02 * min(distance, 25)
+        + 0.12 * max(0, distance - 25)
+    )
+    return known * 0.75 + strength - unknown * 0.25 - distance_penalty
+
+
+def install_detail_slot_alignment(detector, feature_cfg):
+    """Compensate for a small horizontal viewport margin in the game window.
+
+    Some window hosts capture a black/transparent strip on the left of the
+    actual game canvas.  The original fixed coordinates then land on the next
+    row of the card and can report false red elements.  We calibrate the slot
+    coordinates against both detail cards and reuse the offset until the view
+    changes.  The detector still returns slots in their original x order.
+    """
+    vision = feature_cfg['vision']
+    left_x = tuple(int(value) for value in vision['detail_slot_x_left'])
+    right_x = tuple(int(value) for value in vision['detail_slot_x_right'])
+    nominal_y = int(vision['detail_slot_y'])
+    original_read_slots = detector._read_slots
+    state = {'offset': None, 'calibrated_at': 0.0, 'pending': None}
+    min_filled = int(vision.get('min_filled_slots', 2))
+
+    def likely_detail(hsv):
+        """Avoid an expensive calibration scan while the list is visible."""
+        panel_threshold = float(vision.get('panel_parchment_ratio_threshold', 0.55))
+        star_threshold = float(vision.get('detail_star_ratio_threshold', 0.1))
+        return (
+            detector._parchment_ratio(hsv, vision['left_panel_roi']) >= panel_threshold
+            and detector._parchment_ratio(hsv, vision['right_panel_roi']) >= panel_threshold
+            and detector._red_ratio(hsv, vision['left_star_roi']) >= star_threshold
+            and detector._red_ratio(hsv, vision['right_star_roi']) >= star_threshold
+        )
+
+    def read_candidate(hsv, offset):
+        left = original_read_slots(hsv, [value + offset for value in left_x])
+        right = original_read_slots(hsv, [value + offset for value in right_x])
+        left_slots, left_y = left
+        right_slots, right_y = right
+        score = (
+            _slot_alignment_quality(left_slots, left_y, nominal_y)
+            + _slot_alignment_quality(right_slots, right_y, nominal_y)
+        )
+        return score, left, right
+
+    def candidate_is_detail(candidate):
+        _, left, right = candidate
+        left_slots, left_y = left
+        right_slots, right_y = right
+        right_known = sum(1 for slot in right_slots if slot.active and slot.element)
+        return (
+            right_known >= min_filled
+            and abs(int(left_y) - nominal_y) <= 25
+            and abs(int(right_y) - nominal_y) <= 25
+        )
+
+    def search_alignment(hsv):
+        selected = None
+        selected_offset = 0
+        for offset in range(-48, 49, 4):
+            candidate = read_candidate(hsv, offset)
+            if selected is None or candidate[0] > selected[0]:
+                selected = candidate
+                selected_offset = offset
+        state['offset'] = selected_offset
+        state['calibrated_at'] = time.monotonic()
+        return selected
+
+    def aligned_read_slots(hsv, x_values):
+        values = tuple(int(value) for value in x_values)
+        if values == left_x:
+            side = 'left'
+        elif values == right_x:
+            side = 'right'
+        else:
+            return original_read_slots(hsv, x_values)
+
+        token = id(hsv)
+        pending = state['pending']
+        if pending is None or pending['token'] != token:
+            now = time.monotonic()
+            detail_hint = likely_detail(hsv)
+            if not detail_hint:
+                # The current screen is normally the list.  Keep the last
+                # offset without rescanning dozens of rows on every frame.
+                selected = read_candidate(hsv, state['offset'] or 0)
+            elif (
+                state['offset'] is not None
+                and now - state['calibrated_at'] < 4.0
+            ):
+                selected = read_candidate(hsv, state['offset'])
+                if not candidate_is_detail(selected):
+                    selected = search_alignment(hsv)
+            else:
+                selected = search_alignment(hsv)
+            pending = {
+                'token': token,
+                'left': selected[1],
+                'right': selected[2],
+            }
+            state['pending'] = pending
+
+        result = pending[side]
+        if side == 'right':
+            state['pending'] = None
+        return result
+
+    detector._read_slots = aligned_read_slots
+    detector._detail_slot_alignment_state = state
+
+
+def red_attribute_meets_threshold(values, threshold):
+    """All options mean at least the selected percentage, including 27%."""
+    return any(value >= threshold for value in values)
 
 
 def enhancement_keep_reason(values, unreadable, threshold, originals, current):
     """Return a keep reason only when the configured rule is satisfied."""
     qualifying = tuple(value for value in values if value >= threshold)
     if qualifying:
-        operator = '=' if threshold == 27 else '≥'
-        return f'红色词条 {max(qualifying):g}% {operator} {threshold:g}%'
+        return f'红色词条 {max(qualifying):g}% ≥ {threshold:g}%'
     if unreadable:
         return '红色词条数值无法确认'
 
@@ -108,10 +245,17 @@ class ImprintDecomposeController(BaseController):
         super().__init__(cfg, feature_cfg, dry_run=dry_run, on_stats=on_stats)
         self.locator = ImprintWindowLocator(cfg)
         self.input.locator = self.locator
+        install_detail_slot_alignment(self.detector, feature_cfg)
         install_game_digit_templates(self.detector)
+        install_digit_ocr_fallback(self.detector, feature_cfg)
         self._enhancement_red_threshold = 20.0
         self.stats.red_threshold_matches = 0
         self._update_enhancement_status()
+
+    def _red_attribute_meets_threshold(self, analysis):
+        with self._auto_settings_lock:
+            threshold = self._enhancement_red_threshold
+        return red_attribute_meets_threshold(analysis.red_attribute_values, threshold)
 
     def _reset_enhancement_session(self):
         self._red_threshold_counted = False
@@ -120,6 +264,8 @@ class ImprintDecomposeController(BaseController):
         self._initial_existing_enhancements = None
         self._initial_detail_signature = None
         self._initial_detail_seen = 0
+        self._plain_detail_signature = None
+        self._plain_detail_seen = 0
         return super()._reset_enhancement_session()
 
     def _count_red_threshold_match(self, analysis):
@@ -136,6 +282,26 @@ class ImprintDecomposeController(BaseController):
 
     def _handle_detail(self, window, frame, analysis):
         detail = analysis.detail
+        if (not self._enhancement_is_enabled() and detail and detail.right_ready
+                and analysis.dismantle_ready):
+            signature = (tuple(detail.right_combination), detail.right_filled_count,
+                         tuple(analysis.red_attribute_values), analysis.red_attribute_unreadable_count)
+            if signature != getattr(self, '_plain_detail_signature', None):
+                self._plain_detail_signature = signature
+                self._plain_detail_seen = 1
+                self.stats.last_action = '等待刻印与词条识别稳定'
+                self._emit_stats()
+                return
+            self._plain_detail_seen += 1
+            if self._red_attribute_meets_threshold(analysis) or analysis.red_attribute_unreadable_count:
+                if self._red_attribute_meets_threshold(analysis):
+                    self._count_red_threshold_match(analysis)
+                    reason = f'红色词条达到 ≥{self._enhancement_red_threshold:g}%'
+                else:
+                    reason = '红色词条数值无法确认，保护保留'
+                self._record_operation(f'KEEP_DECISION red_values={list(analysis.red_attribute_values)} reason={reason}')
+                self._keep_detail(window, frame, analysis, reason=reason, decision=reason)
+                return
         if not (self._enhancement_is_enabled() and detail and detail.right_ready
                 and analysis.dismantle_ready):
             if detail and self._red_attribute_meets_threshold(analysis):

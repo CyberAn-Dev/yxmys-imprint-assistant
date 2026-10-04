@@ -28,9 +28,11 @@ threading.excepthook = _record_thread_exception
 from imprint_decompose import app
 from imprint_decompose.controller_v2 import ImprintDecomposeController
 from imprint_decompose.ui_v2 import ImprintDecomposeUI
+from imprint_decompose.hotkeys import ImprintHotkeyBridge
 
 app.ImprintDecomposeUI = ImprintDecomposeUI
 app.ImprintDecomposeController = ImprintDecomposeController
+app.ImprintHotkeyBridge = ImprintHotkeyBridge
 
 
 def _logs_dir():
@@ -69,4 +71,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 3 and sys.argv[1] == '--self-test':
+        from imprint_decompose.diagnostics import run
+        sys.exit(run(sys.argv[2]))
+    sys.exit(main())

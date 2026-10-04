@@ -1,0 +1,45 @@
+"""Explicit offline package smoke check: no hooks and no native input."""
+import json
+import traceback
+from pathlib import Path
+
+
+def run(destination):
+    result = {'success': False}
+    controller = ui = None
+    try:
+        import numpy as np
+        from . import __version__
+        from .config import load_feature_config
+        from .controller_v2 import ImprintDecomposeController, red_attribute_meets_threshold
+        from .digit_ocr_fallback import RedPercentageOCR
+        from .ui_v2 import ImprintDecomposeUI
+        cfg, feature = load_feature_config()
+        controller = ImprintDecomposeController(cfg, feature, dry_run=True)
+        controller.locator.find = lambda: None
+        ui = ImprintDecomposeUI(controller)
+        ui.root.update()
+        assert not controller.enabled.is_set()
+        assert red_attribute_meets_threshold((20,), 20)
+        ocr = RedPercentageOCR(feature)
+        assert ocr.available and ocr._ensure_loaded(), 'OCR model unavailable'
+        text, confidence = ocr._infer_text(np.full((24, 90, 3), 255, np.uint8))
+        assert isinstance(text, str) and np.isfinite(confidence)
+        ui._enhancement_threshold_var.set('27')
+        ui._on_enhancement_settings_changed()
+        ui.root.update()
+        assert '≥' in ui._threshold_note_var.get()
+        result.update(version=__version__, ui_size=[ui.root.winfo_width(), ui.root.winfo_height()],
+                      model_inference='passed', threshold_settings='passed', success=True)
+    except Exception:
+        result['error'] = traceback.format_exc()
+    finally:
+        if controller:
+            controller.on_stats = None
+            controller.shutdown()
+        if ui:
+            ui.root.destroy()
+        path = Path(destination)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf8')
+    return 0 if result['success'] else 1

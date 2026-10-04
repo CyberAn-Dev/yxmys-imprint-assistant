@@ -93,7 +93,7 @@ class ImprintDecomposeUI(BaseUI):
     MUTED = '#6e6e73'
 
     def __init__(self, controller):
-        self._updates = queue.SimpleQueue()
+        self._updates = queue.Queue(maxsize=1)
         self._element_images = {}
         self._last_error_logged = None
         self._last_kept_count = 0
@@ -105,15 +105,27 @@ class ImprintDecomposeUI(BaseUI):
         self._set_window_icon()
         self.root.report_callback_exception = self._on_callback_error
         self.root.attributes('-alpha', 1.0)
-        # Keep a fixed desktop layout, but reserve enough vertical space for
-        # the complete statistics card and footer at normal Windows DPI.
-        self.root.geometry('760x960')
-        self.root.resizable(False, False)
+        width = min(780, self.root.winfo_screenwidth() - 60)
+        height = min(900, self.root.winfo_screenheight() - 100)
+        self.root.geometry(f'{width}x{height}')
+        self.root.minsize(min(720, width), min(540, height))
+        self.root.resizable(True, True)
         self._apply_stats(controller.stats)
         self.root.after(80, self._drain)
 
     def _on_stats_threadsafe(self, stats):
-        self._updates.put(copy.deepcopy(stats))
+        snapshot = copy.deepcopy(stats)
+        try:
+            self._updates.put_nowait(snapshot)
+        except queue.Full:
+            try:
+                self._updates.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._updates.put_nowait(snapshot)
+            except queue.Full:
+                pass
 
     def _drain(self):
         latest = None
@@ -323,7 +335,7 @@ class ImprintDecomposeUI(BaseUI):
         if not hasattr(self, '_threshold_note_var'):
             return
         value = self._enhancement_threshold_var.get().strip() or '20'
-        operator = '=' if value in ('27', '27.0') else '≥'
+        operator = '≥'
         self._threshold_note_var.set(
             f'保留：红色词条 {operator} {value}% 或未出现第三种颜色；数值无法确认时暂停'
         )
@@ -400,8 +412,16 @@ class ImprintDecomposeUI(BaseUI):
         return widget
 
     def _build(self):
-        outer = tk.Frame(self.root, bg=self.BG)
-        outer.pack(fill='both', expand=True, padx=18, pady=(10, 8))
+        canvas = tk.Canvas(self.root, bg=self.BG, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.root, orient='vertical', command=canvas.yview)
+        scrollbar.pack(side='right', fill='y')
+        canvas.pack(side='left', fill='both', expand=True)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        outer = tk.Frame(canvas, bg=self.BG, padx=18, pady=10)
+        content = canvas.create_window((0, 0), window=outer, anchor='nw')
+        outer.bind('<Configure>', lambda _event: canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>', lambda event: canvas.itemconfigure(content, width=event.width))
+        self.root.bind('<MouseWheel>', lambda event: canvas.yview_scroll(-int(event.delta / 120), 'units'))
 
         # Pack the footer first so it always reserves space at the bottom.
         footer = tk.Frame(outer, bg=self.BG)
@@ -491,7 +511,7 @@ class ImprintDecomposeUI(BaseUI):
         self._label(threshold_box, '红色词条', fg=self.MUTED).pack(side='left', padx=(0, 7))
         self._segment(
             threshold_box, self._enhancement_threshold_var,
-            [('≥10%', '10'), ('≥15%', '15'), ('≥20%', '20'), ('=27%', '27')],
+            [('≥10%', '10'), ('≥15%', '15'), ('≥20%', '20'), ('≥27%', '27')],
             self._on_enhancement_settings_changed,
         ).pack(side='left')
         self._threshold_note_var = tk.StringVar()

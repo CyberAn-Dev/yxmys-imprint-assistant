@@ -1,4 +1,5 @@
 build/
+.venv/
 dist/
 logs/
 debug/
@@ -8,4 +9,3 @@ __pycache__/
 *.exe
 release/*
 !release/.gitkeep
-
