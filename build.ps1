@@ -73,7 +73,12 @@ if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed.' }
 $artifact = Join-Path $stage "$name.exe"
 $check = Join-Path $stage 'self-test.json'
 if (Test-Path -LiteralPath $check) { Remove-Item -LiteralPath $check }
-$process = Start-Process -FilePath $artifact -ArgumentList @('--self-test', "`"$check`"") -WindowStyle Hidden -Wait -PassThru
+$process = Start-Process -FilePath $artifact -ArgumentList @('--self-test', "`"$check`"") -WindowStyle Hidden -PassThru
+if (-not $process.WaitForExit(45000)) {
+    Stop-Process -InputObject $process -Force
+    throw 'Packaged self-test startup timed out; release unchanged. Check execution restrictions before retrying.'
+}
+$process.Refresh()
 if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $check)) { throw 'Packaged self-test failed; release unchanged.' }
 $result = Get-Content -LiteralPath $check -Raw | ConvertFrom-Json
 if (-not $result.success) { throw "Packaged self-test failed: $($result.error)" }
