@@ -66,16 +66,16 @@ class AutomaticAdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.c.set_enhancement_settings(False, 1, 20)
 
-    def test_top_jump_reaches_backend_as_one_large_upward_event(self):
+    def test_top_seek_reaches_backend_as_two_notches(self):
         rig = Rig()
         intent = rig.command(observation())
         self.c._scan_run = rig.run
         self.c._dispatch_scan(rig.run, intent, self.window, observation())
-        self.assertEqual(self.c.input.backend.scrolls, [(275, 825, rig.run.TOP_JUMP_NOTCHES)])
+        self.assertEqual(self.c.input.backend.scrolls, [(275, 825, 2)])
         self.assertEqual(rig.run.phase, Phase.SCROLL)
-        self.assertFalse(rig.run.top_jump_pending)
+        self.assertTrue(rig.run.seeking_top)
 
-    def test_pause_cancels_undispatched_top_jump(self):
+    def test_pause_cancels_undispatched_top_seek(self):
         rig = Rig()
         intent = rig.command(observation())
         self.c._scan_run = rig.run

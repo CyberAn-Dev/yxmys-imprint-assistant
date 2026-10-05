@@ -93,10 +93,9 @@ class AutoRun:
     LIST_STABLE_SECONDS = .20
     RESULT_SECONDS = .40
     SCROLL_SETTLE = .30
-    TOP_JUMP_SETTLE = .55
-    # One native wheel event. Keep 240 * WHEEL_DELTA within a signed 16-bit
-    # wheel message; this is a reposition, never a downward scanning step.
-    TOP_JUMP_NOTCHES = 240
+    # Modestly faster than downward scanning, with observation after every
+    # step. Never fire a blind whole-inventory jump at startup or on rescan.
+    TOP_SEEK_NOTCHES = 2
     TIMEOUT = 8.0
     STILL_ATTEMPTS = 2
 
@@ -114,8 +113,8 @@ class AutoRun:
         self.pass_number = 1
         self.candidates = 0
         self.seeking_top = True
-        self.top_jump_pending = True
-        self.message = '自动扫描：先大幅上滑回顶，再确认列表边界'
+        self.top_seek_notches = self.TOP_SEEK_NOTCHES
+        self.message = '自动扫描：小幅上滑检查新刻印，到顶后开始扫描'
         self.stable_key = None
         self.stable_since = now
         self.stable_frames = 0
@@ -208,9 +207,10 @@ class AutoRun:
         if self.phase != expected_phase.get(intent.kind):
             return False
         if intent.kind == 'scroll':
-            if self.scroll_kind == 'top_jump':
-                return (self.seeking_top and self.top_jump_pending and self.item is None
-                        and intent.wheel == self.TOP_JUMP_NOTCHES)
+            if self.scroll_kind == 'top_seek':
+                return (self.seeking_top and self.item is None
+                        and self.top_seek_notches in (1, self.TOP_SEEK_NOTCHES)
+                        and intent.wheel == self.top_seek_notches)
             if abs(intent.wheel) != 1:
                 return False
         if intent.kind in ('enhance', 'keep'):
@@ -255,8 +255,6 @@ class AutoRun:
             self._transition(Phase.REWARD, now)
         elif kind == 'scroll':
             self.scrolls += 1
-            if self.scroll_kind == 'top_jump':
-                self.top_jump_pending = False
             self._transition(Phase.SCROLL, now)
 
     def _identity(self, frame):
@@ -324,8 +322,8 @@ class AutoRun:
         if self.scrolls >= self.settings.max_scrolls:
             self._fail('达到滚动安全上限，已暂停；不是全部完成')
         direction = 1 if self.seeking_top else -1
-        if self.seeking_top and self.top_jump_pending and kind == 'travel':
-            kind = 'top_jump'
+        if self.seeking_top and kind == 'travel':
+            kind = 'top_seek'
         if kind == 'probe':
             direction = -direction
         self.scroll_kind = kind
@@ -333,12 +331,12 @@ class AutoRun:
         self.scroll_before = image.copy()
         x0, y0, x1, y1 = scan.roi
         self.message = ('正在回到顶部' if self.seeking_top else '当前页无候选，小幅下滑')
-        if kind == 'top_jump':
-            self.message = '大幅上滑一次回到顶部；停稳后校验边界'
+        if kind == 'top_seek':
+            self.message = f'小幅上滑 {self.top_seek_notches} 格，检查是否还有新刻印'
         elif kind != 'travel':
             self.message = '正在往返验证滚轮与列表边界'
         return self._intent('scroll', point=((x0+x1)//2, (y0+y1)//2),
-                            wheel=self.TOP_JUMP_NOTCHES if kind == 'top_jump' else direction,
+                            wheel=self.top_seek_notches if kind == 'top_seek' else direction,
                             reason=self.message)
 
     def _boundary(self, now, scan):
@@ -360,7 +358,7 @@ class AutoRun:
             self.pass_number += 1
             self.pass_processed = 0
             self.seeking_top = True
-            self.top_jump_pending = True
+            self.top_seek_notches = self.TOP_SEEK_NOTCHES
             self.message = '已到达底部，回顶部复扫以检查补位或重排遗漏'
         else:
             self._transition(Phase.DONE, now)
@@ -373,18 +371,6 @@ class AutoRun:
         direction = self.scroll_direction
         self.last_motion = {'kind': self.scroll_kind, 'direction': direction,
                             'difference': round(difference, 3), 'displacement': None}
-        if self.scroll_kind == 'top_jump':
-            # Returning upward can deliberately cross whole pages: none of
-            # them is considered processed. It grants NO top/selection proof.
-            # A fresh single-notch boundary check (including inverse movement
-            # and return to its anchor) is still required before scanning down.
-            self.still = 1 if difference <= 1.5 else 0
-            self.boundary_proven = False
-            self.boundary_image = None
-            self.next_scroll_kind = 'travel'
-            self._transition(Phase.LIST, now, retain_stability=True)
-            self.message = '大幅回顶已停稳，正在确认顶部；未确认前不选卡'
-            return
         if difference <= 1.5:
             if self.scroll_kind == 'probe':
                 if scan.short_page and not scan.uncertain and self.seeking_top:
@@ -415,6 +401,20 @@ class AutoRun:
             max_shift = max(1, image.shape[0] - 100)
             displacement = scroll_displacement(self.scroll_before, image, max_shift)
             self.last_motion['displacement'] = displacement
+            if (displacement is None and self.scroll_kind == 'top_seek'
+                    and self.top_seek_notches > 1):
+                # Some wheel settings move too far even with two notches.
+                # Reduce once to a single notch for the rest of this ascent;
+                # this unknown movement proves neither direction nor top and
+                # never authorizes selection. The next step must be verified.
+                self.top_seek_notches = 1
+                self.still = 0
+                self.boundary_proven = False
+                self.boundary_image = None
+                self.next_scroll_kind = 'travel'
+                self._transition(Phase.LIST, now, retain_stability=True)
+                self.message = '上滑两格后重叠区域不足，改为每次一格继续核验'
+                return
             if displacement is None or displacement * direction <= 0:
                 self._fail('无法验证滚动方向和重叠区域，可能跨过整行；已暂停，未宣称完成')
             if self.scroll_kind == 'probe':
@@ -498,8 +498,7 @@ class AutoRun:
             if not self._stable(('inventory', scan.roi), now, image, delay=self.LIST_STABLE_SECONDS):
                 return None
             if self.phase == Phase.SCROLL:
-                settle = self.TOP_JUMP_SETTLE if self.scroll_kind == 'top_jump' else self.SCROLL_SETTLE
-                if now - self.phase_at < settle:
+                if now - self.phase_at < self.SCROLL_SETTLE:
                     return None
                 self._scroll_result(scan, image, now)
                 if self.phase != Phase.LIST:
