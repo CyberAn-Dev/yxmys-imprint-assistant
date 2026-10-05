@@ -381,7 +381,7 @@ class ImprintDecomposeController(AutoControllerMixin, BaseController):
                 self._result_seen = 0
                 elapsed = time.monotonic() - (self._phase_since or time.monotonic())
                 if elapsed > float(self.feature_cfg['actions']['enhancement_timeout']):
-                    self._save_debug(frame, analysis, reason='enhancement_slots_not_updated')
+                    self._save_debug(frame, analysis, tag='enhancement_slots_not_updated')
                     raise BotError(f'强化后只识别到 {detail.right_filled_count}/{expected} 个槽位；已停止，未分解')
                 self.stats.last_action = f'等待强化结果：{len(detail.right_combination)}/{expected} 个元素已识别'
                 self._emit_stats()

@@ -1,7 +1,11 @@
 """Adapter tests use a recording backend only, never Windows input."""
 import unittest
+import tempfile
+import time
+from pathlib import Path
 from unittest.mock import Mock, patch
 
+import cv2
 import numpy as np
 
 from imprint_decompose.auto_mode import AutoSafetyError, Phase
@@ -178,6 +182,60 @@ class AutomaticAdapterTests(unittest.TestCase):
         with self.assertRaises(BotError):
             self.c._handle_wait_confirm(self.window, observation(ImprintState.CONFIRM))
         self.assertEqual(self.c.input.backend.clicks, [])
+
+    def test_debug_frames_use_real_save_signature_and_only_one_latest_file(self):
+        self.c.debug_mode.set()
+        self.c.detector.analyze.return_value = observation()
+        with tempfile.TemporaryDirectory() as folder, \
+             patch('tower_bot.config.debug_dir', return_value=Path(folder)), \
+             patch('imprint_decompose.controller.draw_debug_overlay', return_value=self.frame), \
+             patch('imprint_decompose.auto_controller.read_inventory', return_value=inventory(5)):
+            for _ in range(3):
+                self.c._tick()
+            self.assertTrue(self.c.enabled.is_set())
+            self.assertEqual([p.name for p in Path(folder).iterdir()], ['imprint_latest.png'])
+            self.assertEqual(cv2.imread(str(Path(folder) / 'imprint_latest.png')).shape, self.frame.shape)
+
+    def test_safety_stop_really_writes_debug_image_and_revokes_inputs(self):
+        self.c.detector.analyze.return_value = observation()
+        self.c._scan_run.step = Mock(side_effect=AutoSafetyError('test safety stop'))
+        with tempfile.TemporaryDirectory() as folder, \
+             patch('tower_bot.config.debug_dir', return_value=Path(folder)), \
+             patch('imprint_decompose.controller.draw_debug_overlay', return_value=self.frame), \
+             patch('imprint_decompose.auto_controller.read_inventory', return_value=inventory(5)):
+            with self.assertRaisesRegex(BotError, 'test safety stop'):
+                self.c._tick()
+            image = Path(folder) / 'imprint_auto_safety_stop_latest.png'
+            self.assertTrue(image.is_file())
+            self.assertEqual(cv2.imread(str(image)).shape, self.frame.shape)
+        self.assertFalse(self.c.enabled.is_set())
+        self.assertFalse(self.c._scan_run.valid)
+        self.assertEqual(self.c.input.backend.clicks, [])
+        self.assertEqual(self.c.input.backend.scrolls, [])
+
+    def test_debug_failure_does_not_mask_original_safety_stop(self):
+        self.c.detector.analyze.return_value = observation()
+        self.c._scan_run.step = Mock(side_effect=AutoSafetyError('test safety stop'))
+        with patch.object(self.c, '_save_debug', autospec=True, side_effect=OSError('test disk failure')), \
+             patch('imprint_decompose.auto_controller.read_inventory', return_value=inventory(5)), \
+             self.assertLogs('imprint_decompose.auto_controller', level='WARNING') as logs:
+            with self.assertRaisesRegex(BotError, 'test safety stop'):
+                self.c._tick()
+        self.assertIn('test disk failure', '\n'.join(logs.output))
+        self.assertFalse(self.c.enabled.is_set())
+        self.assertFalse(self.c._scan_run.valid)
+
+    def test_manual_enhancement_timeout_uses_real_debug_signature(self):
+        self.c.stop()
+        self.c.set_auto_mode(False)
+        self.c._enhancement_current_combination = ('风暴', '烈焰')
+        self.c._enhancement_completed = 1
+        self.c._phase_since = time.monotonic() - self.c.feature_cfg['actions']['enhancement_timeout'] - 1
+        analysis = observation(ImprintState.DETAIL)
+        with patch.object(self.c, '_save_debug', autospec=True) as save:
+            with self.assertRaisesRegex(BotError, '强化后只识别到 2/3'):
+                self.c._handle_detail(self.window, self.frame, analysis)
+        save.assert_called_once_with(self.frame, analysis, tag='enhancement_slots_not_updated')
 
 
 if __name__ == '__main__':

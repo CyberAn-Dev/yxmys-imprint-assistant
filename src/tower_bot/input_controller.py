@@ -5,6 +5,8 @@ import time
 from typing import Callable, Mapping, Optional, Protocol
 
 import pyautogui
+import win32api
+import win32con
 
 from .coords import reference_to_screen
 from .logger import get_logger
@@ -68,8 +70,15 @@ class PyAutoGuiBackend:
     def scroll(self, x: int, y: int, clicks: int) -> None:
         self._check()
         pyautogui.moveTo(x, y, duration=0.05)
+        pyautogui.failSafeCheck()
         self._check()
-        pyautogui.scroll(int(clicks))
+        # Our public unit is wheel notches. PyAutoGUI 0.9.54 on Windows
+        # forwards clicks as raw dwData (+/-1 is only 1/120 of a notch)
+        # and swallows OS errors. Send an explicit signed Windows delta.
+        delta = int(clicks) * win32con.WHEEL_DELTA
+        win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, delta, 0)
+        logger.info('滚轮已发送: notches=%d wheel_delta=%d screen=(%d,%d)',
+                    int(clicks), delta, x, y)
 
 
 class DryRunBackend:

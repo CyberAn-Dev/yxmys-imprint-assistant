@@ -2,10 +2,13 @@
 import time
 
 from tower_bot.models import ActionType, BotError, Point, Rect
+from tower_bot.logger import get_logger
 
 from .auto_mode import AutoRun, AutoSettings, AutoSafetyError, Phase, ordered_slots
 from .auto_vision import ListScan, blank_inventory, image_distance, list_chrome, read_inventory
 from .models import ImprintState, combination_label
+
+logger = get_logger(__name__)
 
 
 class AutoControllerMixin:
@@ -200,7 +203,9 @@ class AutoControllerMixin:
             scan = (ListScan((), roi, empty=True) if empty else
                     read_inventory(frame, roi) if analysis.state == ImprintState.LIST else None)
             if self.debug_mode.is_set():
-                self._save_debug(frame, analysis, reason='auto_latest')
+                # Legacy writer overwrites this tag; other tags also create
+                # timestamped files, which must not accumulate every frame.
+                self._save_debug(frame, analysis, tag='latest')
             intent = run.step(analysis, frame, scan, time.monotonic())
             self._sync_scan_stats(run)
             if run.phase == Phase.DONE:
@@ -222,9 +227,11 @@ class AutoControllerMixin:
             self.stats.last_error = message
             if frame is not None and analysis is not None:
                 try:
-                    self._save_debug(frame, analysis, reason='auto_safety_stop')
-                except Exception:
-                    pass  # Debug output must never defeat the input stop.
+                    self._save_debug(frame, analysis, tag='auto_safety_stop')
+                except Exception as debug_exc:
+                    # Diagnostic failures must neither hide the original
+                    # cause nor defeat the input stop.
+                    logger.warning('保存自动扫描诊断图失败: %s', debug_exc)
             self._record_operation(f'AUTO_SAFETY_STOP {message}')
             self._emit_stats()
             raise BotError(message) from exc
