@@ -220,10 +220,10 @@ class ImprintDecomposeUI(BaseUI):
         if stats.auto_phase == '全部完成' and stats.program_status == '自动处理完成':
             messagebox.showinfo(
                 '处理完成',
-                '完成刻印自动筛选分解\n\n'
-                f'本轮已处理 {stats.auto_processed} 枚刻印。\n'
-                '已确认列表到底或为单页，当前没有待处理候选。\n'
-                '本次扫描结束，不再回顶部复扫。',
+                '完成了\n\n'
+                f'本次处理：{stats.auto_processed} 枚\n'
+                f'本次保留：{stats.auto_run_kept} 枚\n'
+                f'刻印数：{stats.inventory_start} → {stats.inventory_end}',
                 parent=self.root,
             )
 

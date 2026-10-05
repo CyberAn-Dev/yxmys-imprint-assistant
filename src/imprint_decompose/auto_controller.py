@@ -26,6 +26,8 @@ class AutoControllerMixin:
         self._scan_trace_key = None
         self._scan_trace_at = 0.
         self._scan_stall_evidence = None
+        self._inventory_counter = None
+        self._inventory_start_checked = False
         super().__init__(*args, **kwargs)
         original_guard = self.input._guard_dispatch
 
@@ -150,6 +152,9 @@ class AutoControllerMixin:
                 self._scan_chrome = None
                 self._scan_roi = None
                 self._scan_stall_evidence = None
+                self._inventory_start_checked = False
+                self.stats.inventory_start = self.stats.inventory_end = '未识别'
+                self.stats.auto_run_kept = 0
                 self._scan_base_counts = (self.stats.total_kept, self.stats.red_threshold_matches,
                                           self.stats.enhancement_clicks)
                 self._scan_reported_decomposed = 0
@@ -208,6 +213,7 @@ class AutoControllerMixin:
         self.stats.last_action = run.message
         kept, red, clicks = self._scan_base_counts
         self.stats.total_kept = kept + run.kept
+        self.stats.auto_run_kept = run.kept
         self.stats.red_threshold_matches = red + run.red_matches
         self.stats.enhancement_clicks = clicks + run.clicks
         self._enhancement_clicks_total = self.stats.enhancement_clicks
@@ -221,7 +227,18 @@ class AutoControllerMixin:
             self._scan_reported_decomposed = run.decomposed
         self._emit_stats()
 
-    def _finish_scan(self, run):
+    def _read_inventory_count(self, frame):
+        from .inventory_count import InventoryCounter, format_count
+        try:
+            if self._inventory_counter is None:
+                self._inventory_counter = InventoryCounter()
+            value = self._inventory_counter.read(frame, self.feature_cfg['vision']['list_roi'])
+            return format_count(value)
+        except Exception as exc:
+            logger.warning('库存数量未识别（仅影响完成报告）: %s', exc)
+            return '未识别'
+
+    def _finish_scan(self, run, frame=None):
         # A persistent, monotonic event survives the UI's latest-only queue.
         # Errors, material timeouts, pause and safety limits never reach here.
         with self._auto_settings_lock:
@@ -230,6 +247,8 @@ class AutoControllerMixin:
             self.enabled.clear()
             if getattr(run, 'completion_reported', False):
                 return
+            self.stats.auto_run_kept = run.kept
+            self.stats.inventory_end = self._read_inventory_count(frame) if frame is not None else '未识别'
             run.completion_reported = True
             self.stats.program_status = '自动处理完成'
             self.stats.auto_completion_id += 1
@@ -290,6 +309,9 @@ class AutoControllerMixin:
             scan = (ListScan((), roi, empty=True) if empty else
                     read_inventory(frame, roi) if analysis.state == ImprintState.LIST else None)
             timings['inventory'] = round((time.monotonic()-stage)*1000, 1)
+            if analysis.state == ImprintState.LIST and not self._inventory_start_checked:
+                self._inventory_start_checked = True
+                self.stats.inventory_start = self._read_inventory_count(frame)
             if self.debug_mode.is_set():
                 # Legacy writer overwrites this tag; other tags also create
                 # timestamped files, which must not accumulate every frame.
@@ -312,7 +334,7 @@ class AutoControllerMixin:
             self._trace_scan(run, scan, timings, intent)
             self._sync_scan_stats(run)
             if run.phase == Phase.DONE:
-                self._finish_scan(run)
+                self._finish_scan(run, frame)
                 return
             if intent:
                 self._dispatch_scan(run, intent, window, analysis)

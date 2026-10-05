@@ -19,7 +19,7 @@ class UIStatusTests(unittest.TestCase):
             self.ui._notify_completion(stats)
             self.ui._notify_completion(stats)
             popup.assert_called_once()
-            self.assertIn('完成刻印自动筛选分解', popup.call_args.args[1])
+            self.assertEqual('完成了\n\n本次处理：17 枚\n本次保留：0 枚\n刻印数：未识别 → 未识别', popup.call_args.args[1])
             stats.auto_completion_id = 2
             self.ui._notify_completion(stats)
             self.assertEqual(popup.call_count, 2)
@@ -30,6 +30,16 @@ class UIStatusTests(unittest.TestCase):
                 self.ui._notify_completion(ImprintStats(auto_phase=phase))
             self.ui._notify_completion(ImprintStats(auto_phase='保护暂停', auto_completion_id=1))
             popup.assert_not_called()
+
+    def test_completion_uses_run_kept_not_lifetime_total(self):
+        stats = ImprintStats(auto_completion_id=1, auto_phase='全部完成',
+                             program_status='自动处理完成', auto_processed=4,
+                             auto_run_kept=1, total_kept=50,
+                             inventory_start='839/1600', inventory_end='836/1600')
+        with patch('imprint_decompose.ui_v2.messagebox.showinfo') as popup:
+            self.ui._notify_completion(stats)
+            self.assertEqual(popup.call_args.args[1],
+                             '完成了\n\n本次处理：4 枚\n本次保留：1 枚\n刻印数：839/1600 → 836/1600')
 
     def test_status_is_readable_bounded_and_does_not_leak_auto_safe_prefix(self):
         stats = ImprintStats(last_action='AUTO_SAFETY_STOP 当前属性与本轮记录不一致')

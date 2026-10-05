@@ -168,6 +168,9 @@ class ImprintStats:
     auto_phase: str = '手动选择'
     keep_two_elements: bool = True
     auto_completion_id: int = 0
+    auto_run_kept: int = 0
+    inventory_start: str = '未识别'
+    inventory_end: str = '未识别'
     last_action: str = '-'
     operation_history: str = '-'
     last_error: str = '-'

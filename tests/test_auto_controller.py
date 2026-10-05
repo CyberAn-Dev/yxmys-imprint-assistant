@@ -118,6 +118,24 @@ class AutomaticAdapterTests(unittest.TestCase):
         self.assertFalse(self.c.enabled.is_set())
         self.assertEqual(self.c.stats.program_status, '自动处理完成')
 
+    def test_completion_inventory_is_observed_once_and_reset_on_restart(self):
+        run = self.c._scan_run
+        run.phase = Phase.DONE
+        run.kept = 2
+        self.c.stats.total_kept = 50
+        self.c.stats.inventory_start = '839/1600'
+        self.c._read_inventory_count = Mock(return_value='836/1600')
+        self.c._finish_scan(run, self.frame)
+        self.c._finish_scan(run, self.frame)
+        self.c._read_inventory_count.assert_called_once_with(self.frame)
+        self.assertEqual(self.c.stats.auto_run_kept, 2)
+        self.assertEqual(self.c.stats.inventory_end, '836/1600')
+        self.c.start()
+        self.assertEqual(self.c.stats.inventory_start, '未识别')
+        self.assertEqual(self.c.stats.inventory_end, '未识别')
+        self.assertEqual(self.c.stats.auto_run_kept, 0)
+        self.assertFalse(self.c._inventory_start_checked)
+
     def test_fresh_dismantle_recheck_respects_disabled_color_rule(self):
         rig = Rig(keep_two_elements=False)
         from test_auto_mode import COLORS
