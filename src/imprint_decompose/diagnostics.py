@@ -20,6 +20,14 @@ def run(destination):
         ui = ImprintDecomposeUI(controller)
         ui.root.update()
         assert not controller.enabled.is_set()
+        assert controller._scan_run is None, 'startup must not begin a scan'
+        assert controller.stats.auto_mode and controller.stats.enhancement_enabled
+        assert controller.stats.enhancement_target == 2
+        assert controller.stats.red_attribute_threshold == 20
+        assert ui._selection_mode_var.get() == 'auto'
+        assert ui._enhancement_enabled_var.get()
+        assert ui._enhancement_rounds_var.get() == '2'
+        assert ui._enhancement_threshold_var.get() == '20'
         assert red_attribute_meets_threshold((20,), 20)
         ocr = RedPercentageOCR(feature)
         assert ocr.available and ocr._ensure_loaded(), 'OCR model unavailable'
@@ -29,6 +37,9 @@ def run(destination):
         ui._on_enhancement_settings_changed()
         ui.root.update()
         assert '≥' in ui._threshold_note_var.get()
+        ui._selection_mode_var.set('manual')
+        ui._on_selection_mode_changed()
+        assert not controller.stats.auto_mode and not controller.enabled.is_set()
         ui._selection_mode_var.set('auto')
         ui._on_selection_mode_changed()
         ui.root.update()
@@ -83,6 +94,7 @@ def run(destination):
         result.update(version=__version__, ui_size=[ui.root.winfo_width(), ui.root.winfo_height()],
                       model_inference='passed', threshold_settings='passed',
                       automatic_mode_controls='passed',
+                      startup_defaults='passed',
                       live_mode_refresh='passed',
                       single_page_layout='passed', success=True)
     except Exception:

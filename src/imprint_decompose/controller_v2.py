@@ -255,7 +255,10 @@ class ImprintDecomposeController(AutoControllerMixin, BaseController):
         install_digit_ocr_fallback(self.detector, feature_cfg)
         self._enhancement_red_threshold = 20.0
         self.stats.red_threshold_matches = 0
-        self._update_enhancement_status()
+        # Startup preferences only: setters do not start a worker or enable
+        # game input. F9/start is still required to create an AutoRun.
+        self.set_enhancement_settings(True, 2, 20.0)
+        self.set_auto_mode(True)
 
     def _red_attribute_meets_threshold(self, analysis):
         with self._auto_settings_lock:

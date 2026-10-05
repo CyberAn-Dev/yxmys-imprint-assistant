@@ -508,7 +508,7 @@ class ImprintDecomposeUI(BaseUI):
         selection = tk.Frame(settings, bg=self.CARD)
         selection.pack(fill='x', pady=(0, 6))
         self._label(selection, '选卡方式', bold=True).pack(side='left', padx=(0, 10))
-        self._selection_mode_var = tk.StringVar(value='manual')
+        self._selection_mode_var = tk.StringVar(value='auto' if self.controller.stats.auto_mode else 'manual')
         self._segment(selection, self._selection_mode_var,
                       [('手动选卡', 'manual'), ('自动扫描', 'auto')],
                       self._on_selection_mode_changed).pack(side='left')
@@ -540,7 +540,7 @@ class ImprintDecomposeUI(BaseUI):
         self._update_threshold_note()
         self._label(settings, '', textvariable=self._threshold_note_var,
                     fg=self.MUTED, size=9).pack(anchor='e', pady=(5, 0))
-        self._vars['auto_progress'] = tk.StringVar(value='手动选卡')
+        self._vars['auto_progress'] = tk.StringVar(value='待开始' if self.controller.stats.auto_mode else '手动选卡')
         self._label(settings, '', textvariable=self._vars['auto_progress'],
                     fg='#0071e3', size=9).pack(anchor='w', pady=(5, 0))
 

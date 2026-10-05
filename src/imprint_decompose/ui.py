@@ -126,9 +126,9 @@ class ImprintDecomposeUI:
 
         self._vars: dict[str, tk.StringVar] = {}
         self._element_vars: dict[str, tk.StringVar] = {}
-        self._enhancement_enabled_var = tk.BooleanVar(value=False)
-        self._enhancement_rounds_var = tk.StringVar(value="1")
-        self._enhancement_threshold_var = tk.StringVar(value="20")
+        self._enhancement_enabled_var = tk.BooleanVar(value=controller.stats.enhancement_enabled)
+        self._enhancement_rounds_var = tk.StringVar(value=str(controller.stats.enhancement_target))
+        self._enhancement_threshold_var = tk.StringVar(value=f'{float(controller.stats.red_attribute_threshold):g}')
         self._confirmation_mode_var = tk.StringVar(value="auto")
         self._build()
         self.controller.on_stats = self._on_stats_threadsafe
