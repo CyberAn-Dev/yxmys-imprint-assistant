@@ -91,9 +91,9 @@ def ordered_slots(detail):
 class AutoRun:
     STABLE_SECONDS = .25
     RESULT_SECONDS = .40
-    SCROLL_SETTLE = .70
+    SCROLL_SETTLE = .40
     TIMEOUT = 8.0
-    STILL_ATTEMPTS = 3
+    STILL_ATTEMPTS = 2
 
     def __init__(self, settings, keep_policy, now, *, identity_roi=(345, 150, 465, 250)):
         self.settings = settings
@@ -126,6 +126,11 @@ class AutoRun:
         self.single_page = False
         self.short_page_items = self.short_page_decomposed = 0
         self.check_top_crop = False
+        self.last_motion = None
+        self.last_observation = '尚未收到列表截图'
+        self.readable_key = None
+        self.readable_frames = 0
+        self.readable_since = now
 
     def expects_empty(self):
         return bool(self.single_page and self.item and self.item.outcome == 'decompose'
@@ -140,17 +145,34 @@ class AutoRun:
         self.phase = Phase.INVALID
 
     def _fail(self, message):
+        self.failed_phase = self.phase
         self.message = message
         self.invalidate()
         raise AutoSafetyError(message)
 
-    def _transition(self, phase, now):
+    def _transition(self, phase, now, *, retain_stability=False):
         self.phase = phase
         self.phase_at = now
         self.pending = None
-        self.stable_key = self.stable_image = None
-        self.stable_frames = 0
-        self.stable_since = now
+        if not retain_stability:
+            self.stable_key = self.stable_image = None
+            self.stable_frames = 0
+            self.stable_since = now
+            self.readable_key = None
+            self.readable_frames = 0
+            self.readable_since = now
+
+    def _readable(self, scan, now):
+        if scan.uncertain or not scan.cards:
+            self.readable_key = None
+            self.readable_frames = 0
+            return False
+        key = scan.stability_key
+        if key != self.readable_key:
+            self.readable_key, self.readable_frames, self.readable_since = key, 1, now
+            return False
+        self.readable_frames += 1
+        return self.readable_frames >= 3 and now - self.readable_since >= self.STABLE_SECONDS
 
     def _stable(self, key, now, image=None, *, result=False):
         changed = key != self.stable_key or (image is not None and image_distance(image, self.stable_image) > 1.5)
@@ -300,6 +322,8 @@ class AutoRun:
                             wheel=direction, reason=self.message)
 
     def _boundary(self, now, scan):
+        if scan.uncertain or not scan.cards:
+            self._fail('边界画面已停稳，但槽位仍无法确认；未宣称完成：' + ', '.join(scan.issues))
         self.still = 0
         self.boundary_image = None
         self.boundary_proven = False
@@ -321,14 +345,16 @@ class AutoRun:
             self._transition(Phase.DONE, now)
             self.message = '已验证到底且完整复扫无候选，自动处理完成'
             return
-        self._transition(Phase.LIST, now)
+        self._transition(Phase.LIST, now, retain_stability=True)
 
     def _scroll_result(self, scan, image, now):
         difference = image_distance(self.scroll_before, image)
         direction = self.scroll_direction
+        self.last_motion = {'kind': self.scroll_kind, 'direction': direction,
+                            'difference': round(difference, 3), 'displacement': None}
         if difference <= 1.5:
             if self.scroll_kind == 'probe':
-                if scan.short_page and self.seeking_top:
+                if scan.short_page and not scan.uncertain and self.seeking_top:
                     # A sizeable, positively empty parchment band below all
                     # complete cards proves a short single-page inventory.
                     self.single_page = True
@@ -337,7 +363,7 @@ class AutoRun:
                     self.seeking_top = False
                     self.still = 0
                     self.next_scroll_kind = 'travel'
-                    self._transition(Phase.LIST, now)
+                    self._transition(Phase.LIST, now, retain_stability=True)
                     self.message = '已确认单页小库存，开始逐卡处理'
                     return
                 self._fail('正反滚轮都未产生可验证移动，无法确认列表边界；请检查窗口/列表区域')
@@ -355,6 +381,7 @@ class AutoRun:
         else:
             max_shift = max(1, image.shape[0] - 100)
             displacement = scroll_displacement(self.scroll_before, image, max_shift)
+            self.last_motion['displacement'] = displacement
             if displacement is None or displacement * direction <= 0:
                 self._fail('无法验证滚动方向和重叠区域，可能跨过整行；已暂停，未宣称完成')
             if self.scroll_kind == 'probe':
@@ -363,14 +390,16 @@ class AutoRun:
                 if image_distance(image, self.boundary_image) > 2.5:
                     self._fail('滚轮往返后未恢复同一列表边界，已暂停')
                 self.boundary_proven = True
-                self.still = 0
+                # Two stationary attempts + a real inverse displacement +
+                # the exact anchor restored already prove the boundary.
+                # Do not repeat three more upward/downward wheel commands.
                 self.next_scroll_kind = 'travel'
             else:
                 self.still = 0
                 self.boundary_proven = False
                 self.boundary_image = None
                 self.next_scroll_kind = 'travel'
-        self._transition(Phase.LIST, now)
+        self._transition(Phase.LIST, now, retain_stability=True)
 
     def _returned(self, now):
         s = self.item
@@ -402,25 +431,54 @@ class AutoRun:
         if self.phase == Phase.CONFIRM and self.settings.confirmation == 'manual':
             timeout = 300
         if now - self.phase_at > timeout:
-            self._fail(f'{self.phase.name} 阶段等待超时（可能材料不足或界面未响应），未重复点击')
+            reasons = {
+                Phase.LIST: '列表槽位未能完整、稳定识别；未继续下滑或选卡',
+                Phase.SCROLL: '滚动后画面未停稳或未回到列表；未重复发送滚轮',
+                Phase.OPEN: '选卡后未观察到可核验详情；未重复点击',
+                Phase.ENHANCE: '强化后未观察到槽位增加（可能材料不足）；未重复强化',
+                Phase.DETAIL: '详情属性未稳定；未分解',
+                Phase.CONFIRM: '未观察到关联分解确认结果；未重复点击',
+                Phase.RETURN: '尚未确认返回列表；未重复点击',
+                Phase.REWARD: '尚未确认奖励关闭；未重复点击',
+            }
+            self._fail(f'{self.phase.name} 等待超时：{reasons.get(self.phase, "界面未响应")}。'
+                       f'最近识别：{self.last_observation}')
         state = analysis.state
+        self.last_observation = (f'{state.name}; 卡片={len(scan.cards)}, '
+                                 f'不确定={scan.uncertain}, 问题={scan.issues}'
+                                 if scan is not None else f'{state.name}; 无列表识别')
         if self.phase == Phase.DETAIL and state != ImprintState.DETAIL:
             self._fail('稳定详情意外消失，处理记录已撤销；请回列表重新开始')
         if self.phase in (Phase.LIST, Phase.SCROLL):
             if state in (ImprintState.DETAIL, ImprintState.CONFIRM, ImprintState.REWARD):
                 self._fail('自动扫描必须从刻印列表开始；不接管未关联的详情或弹窗')
-            if state != ImprintState.LIST or scan is None or scan.uncertain or not scan.cards:
+            if state != ImprintState.LIST or scan is None or not scan.cards:
                 self.stable_key = None
+                self.readable_key = None
                 self.message = '等待列表槽位完整识别；不把识别失败当成空列表'
                 return None
             image = list_image(frame, scan.roi)
-            if not self._stable(scan.signature, now, image):
+            # Pixel stability proves scrolling has settled. Eligibility is
+            # separate: unreadable cards NEVER authorize selection or travel
+            # down the inventory. One-pixel coordinate jitter is harmless.
+            readable = self._readable(scan, now)
+            if not self._stable(('inventory', scan.roi), now, image):
                 return None
             if self.phase == Phase.SCROLL:
                 if now - self.phase_at < self.SCROLL_SETTLE:
                     return None
                 self._scroll_result(scan, image, now)
+                if self.phase != Phase.LIST:
+                    return None
+                # Reuse this already settled frame instead of paying for
+                # the same three-frame wait again in LIST.
+            if not readable:
+                self.message = '画面已停稳，等待槽位识别：' + (', '.join(scan.issues) or '等待连续稳定槽位')
                 return None
+            if self.boundary_proven:
+                self._boundary(now, scan)
+                if self.phase != Phase.LIST:
+                    return None
             self.candidates = len(scan.candidates)
             if self.check_top_crop:
                 self.check_top_crop = False
@@ -481,7 +539,7 @@ class AutoRun:
                 empty = bool(scan and scan.empty and self.expects_empty())
                 if scan is None or scan.uncertain or (not scan.cards and not empty):
                     return None
-                if self._stable(('returned', scan.signature), now, list_image(frame, scan.roi)):
+                if self._stable(('returned', scan.stability_key), now, list_image(frame, scan.roi)):
                     if s.outcome == 'decompose' and not s.reward_seen and now-self.phase_at < 2.5:
                         return None
                     self._returned(now)

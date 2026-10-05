@@ -337,6 +337,92 @@ class AutomaticWorkflowTests(unittest.TestCase):
 
 
 class ScrollWorkflowTests(unittest.TestCase):
+    def test_top_confirmation_uses_four_wheels_not_eight(self):
+        rig = Rig()
+        rig.scan = inventory(2)
+        texture = np.random.default_rng(8).integers(0, 256, (600, 510, 3), dtype=np.uint8)
+        offset, wheels, selected = 0, [], None
+        for _ in range(60):
+            rig.frame[680:970, 20:530] = texture[offset:offset+290]
+            command = rig.step(observation())
+            if command:
+                if command.kind == 'select':
+                    selected = command
+                    break
+                wheels.append(command.wheel)
+                offset = max(0, min(280, offset-command.wheel*70))
+                rig.ack(command)
+        self.assertIsNotNone(selected)
+        self.assertEqual(wheels, [1, 1, -1, 1])
+        self.assertEqual(offset, 0)
+        self.assertLessEqual(rig.now, 4)
+
+    def test_scroll_reuses_stable_frame_without_second_list_wait(self):
+        rig = Rig()
+        rig.run.seeking_top = False
+        rig.scan = inventory(5)
+        texture = np.random.default_rng(8).integers(0, 256, (600, 510, 3), dtype=np.uint8)
+        rig.frame[680:970, 20:530] = texture[:290]
+        rig.ack(rig.command(observation()))
+        rig.frame[680:970, 20:530] = texture[70:360]
+        self.assertIsNone(rig.step(observation()))
+        self.assertIsNone(rig.step(observation()))
+        command = rig.step(observation())
+        self.assertIsNotNone(command)
+        self.assertEqual(command.kind, 'scroll')
+        self.assertEqual(command.wheel, -1)
+
+    def test_coordinate_jitter_does_not_restart_slot_stability(self):
+        rig = Rig()
+        rig.run.seeking_top = False
+        command = None
+        for index in range(4):
+            d = index % 2
+            scan = ListScan((ScanCard(88+d, 724+d, 768+d, 15, COLORS[:2], True, 0),
+                             ScanCard(181, 724, 769-d, 15, COLORS[:2], True, 1)), ROI)
+            command = rig.step(observation(), scan)
+            if command:
+                break
+        self.assertIsNotNone(command)
+        self.assertEqual(command.kind, 'select')
+        self.assertLess(command.point[0], 100)
+
+    def test_changed_attributes_do_require_new_stable_readings(self):
+        rig = Rig()
+        rig.run.seeking_top = False
+        for index in range(20):
+            self.assertIsNone(rig.step(observation(), inventory(2 if index % 2 else 3)))
+        self.assertEqual(rig.actions, [])
+
+    def test_scroll_motion_can_finish_but_uncertain_slots_cannot_authorize_more_input(self):
+        rig = Rig()
+        rig.run.seeking_top = False
+        rig.scan = inventory(5)
+        texture = np.random.default_rng(8).integers(0, 256, (600, 510, 3), dtype=np.uint8)
+        rig.frame[680:970, 20:530] = texture[:290]
+        rig.ack(rig.command(observation()))
+        rig.frame[680:970, 20:530] = texture[70:360]
+        uncertain = ListScan(rig.scan.cards, ROI, uncertain=True, issues=('灰槽无法确认',))
+        for _ in range(4):
+            self.assertIsNone(rig.step(observation(), uncertain))
+        self.assertEqual(rig.run.phase, Phase.LIST)
+        self.assertEqual(rig.run.last_motion['displacement'], -70)
+        with self.assertRaisesRegex(AutoSafetyError, '列表槽位.*灰槽无法确认') as error:
+            for _ in range(40):
+                rig.step(observation(), uncertain)
+        self.assertNotIn('材料不足', str(error.exception))
+        self.assertEqual(rig.run.scrolls, 1)
+
+    def test_scroll_animation_never_stable_times_out_without_material_message(self):
+        rig = Rig()
+        rig.scan = inventory(5)
+        rig.ack(rig.command(observation()))
+        with self.assertRaisesRegex(AutoSafetyError, '滚动后画面未停稳') as error:
+            for index in range(40):
+                rig.frame[680:970, 20:530] = (index % 2)*255
+                self.assertIsNone(rig.step(observation()))
+        self.assertNotIn('材料不足', str(error.exception))
+
     def test_positively_identified_short_page_can_run_without_scroll_motion(self):
         rig = Rig()
         rig.scan = ListScan(inventory(2).cards, ROI, short_page=True)
@@ -385,7 +471,7 @@ class ScrollWorkflowTests(unittest.TestCase):
                 if command:
                     rig.ack(command)
         self.assertNotEqual(rig.run.phase, Phase.DONE)
-        self.assertEqual(rig.run.scrolls, 4)
+        self.assertEqual(rig.run.scrolls, 3)
 
 
 if __name__ == '__main__':

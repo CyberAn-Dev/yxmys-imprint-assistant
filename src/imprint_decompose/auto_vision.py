@@ -39,6 +39,7 @@ class ListScan:
     short_page: bool = False
     empty: bool = False
     clipped_bottom: bool = False
+    issues: tuple[str, ...] = ()
 
     @property
     def candidates(self):
@@ -47,6 +48,18 @@ class ListScan:
     @property
     def signature(self):
         return tuple((c.x, c.slot_y, c.elements, c.complete) for c in self.cards)
+
+    @property
+    def stability_key(self):
+        # Subpixel resampling may change rounded centres or reverse two
+        # columns' y order. Image stability still guards real movement.
+        rows = []
+        for c in sorted(self.cards, key=lambda c: (c.slot_y, c.x)):
+            if not rows or abs(c.slot_y - rows[-1][0].slot_y) > 3:
+                rows.append([])
+            rows[-1].append(c)
+        return tuple(tuple((c.column, c.elements, c.complete)
+                           for c in sorted(row, key=lambda c: c.x)) for row in rows)
 
 
 def _element(hues):
@@ -62,6 +75,28 @@ def _element(hues):
         if lo <= hue <= hi:
             return name
     return None
+
+
+def inventory_viewport(frame, roi):
+    """Exclude an intruding fixed bottom navigation bar, not a partial row.
+
+    The configured ROI can extend into the nav when the host's title bar
+    changes the normalized height. Require both a broad dark separator and
+    a dark band BELOW parchment; isolated badges/card shadows cannot trim it.
+    The controller freezes this viewport for the run, before any scrolling.
+    """
+    x0, y0, x1, y1 = map(int, roi)
+    if not (0 <= x0 < x1 <= frame.shape[1] and 0 <= y0 < y1 <= frame.shape[0]):
+        raise ValueError('刻印列表识别区域超出截图边界')
+    hsv = cv2.cvtColor(frame[:, x0:x1], cv2.COLOR_BGR2HSV)
+    s, v = hsv[:, :, 1], hsv[:, :, 2]
+    dark = (s < 100) & (v < 85)
+    parchment = (s >= 20) & (s < 90) & (v >= 90) & (v <= 220)
+    for y in range(max(y0+180, y1-65), min(y1, len(hsv)-15)):
+        if (dark[y].mean() >= .85 and dark[y+3:y+15].mean() >= .75
+                and parchment[y-15:y-3].mean() >= .55):
+            return (x0, y0, x1, y)
+    return (x0, y0, x1, y1)
 
 
 def read_inventory(frame, roi):
@@ -106,6 +141,8 @@ def read_inventory(frame, roi):
         rows[-1].append((cx, cy))
     cards = []
     uncertain = False
+    issues = []
+    invalid_strips = []
     clipped_bottom = False
     for row in rows:
         groups = []
@@ -155,11 +192,19 @@ def read_inventory(frame, roi):
                 row_cards.append(ScanCard(cx, round(sy - pitch * 2.7), sy,
                                           pitch, tuple(elements), complete))
             elif complete:
-                # Ignore isolated decorative components, but a populated row
-                # with a damaged strip must not become an "empty page".
-                uncertain = True
+                invalid_strips.append((cx, sy, pitch))
         cards.extend(row_cards)
     cards.sort(key=lambda c: (c.slot_y, c.x))
+    for cx, sy, pitch in invalid_strips:
+        # Tiny red fragments in a triangle/star or its level badge can mimic
+        # the start of a strip. Only discard them when a FULLY validated five
+        # slot strip places the fragment inside that same card's artwork.
+        # Missing grey slots at the real strip's height remain an error.
+        if any(abs(c.x-cx) <= c.pitch*1.1
+               and c.slot_y-c.pitch*3.5 < sy < c.slot_y-c.pitch for c in cards):
+            continue
+        uncertain = True
+        issues.append(f'槽位不完整@{cx},{sy}')
     # Validate the five-column lattice from observed positions, not from the
     # supplied cropped screenshots. A trailing partial inventory row is OK.
     if cards:
@@ -167,21 +212,25 @@ def read_inventory(frame, roi):
         observed = []
         for a in cards:
             neighbors = [b.x - a.x for b in cards
-                         if abs(b.slot_y-a.slot_y) <= 3 and b.x-a.x > pitch * 4]
+                         if abs(b.slot_y-a.slot_y) <= 3
+                         and pitch * 5.5 <= b.x-a.x <= pitch * 7.3]
             if neighbors:
                 observed.append(min(neighbors))
         column_pitch = float(np.median(observed)) if observed else pitch * 6.4
         if not pitch * 5.5 <= column_pitch <= pitch * 7.3:
             uncertain = True
+            issues.append('列间距异常')
         first = min(c.x for c in cards)
         # Expected first column is near 1/8th of the visible list width.
         if first > x0 + (x1 - x0) * .23:
             uncertain = True
+            issues.append('未识别到第一列')
         numbered = []
         for c in cards:
             column = round((c.x - first) / column_pitch)
             if not 0 <= column <= 4 or abs(c.x - (first + column * column_pitch)) > pitch * .55:
                 uncertain = True
+                issues.append(f'列位置异常@{c.x},{c.slot_y}')
             numbered.append(ScanCard(c.x, c.y, c.slot_y, c.pitch, c.elements, c.complete, column))
         cards = numbered
         # Do not mistake a missed middle/right card for an incomplete final
@@ -199,6 +248,7 @@ def read_inventory(frame, roi):
                     and cy - pitch*2.3 > y0+2 and cy + pitch*3.3 < y1-2):
                 if not any(abs(c.x-cx) < pitch*1.5 and abs(c.y-cy) < pitch*1.7 for c in cards):
                     uncertain = True
+                    issues.append(f'卡片槽位漏识别@{round(cx)},{round(cy)}')
     short_page = False
     if cards and not uncertain and all(c.complete for c in cards):
         pitch = float(np.median([c.pitch for c in cards]))
@@ -208,7 +258,7 @@ def read_inventory(frame, roi):
                 and _parchment_empty(hsv[blank_from:y1, x0:x1])):
             short_page = True
     return ListScan(tuple(cards), (x0, y0, x1, y1), uncertain, short_page,
-                    clipped_bottom=clipped_bottom)
+                    clipped_bottom=clipped_bottom, issues=tuple(issues))
 
 
 def _parchment_empty(hsv):

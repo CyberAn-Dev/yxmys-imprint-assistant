@@ -5,8 +5,10 @@ from tower_bot.models import ActionType, BotError, Point, Rect
 from tower_bot.logger import get_logger
 
 from .auto_mode import AutoRun, AutoSettings, AutoSafetyError, Phase, ordered_slots
-from .auto_vision import ListScan, blank_inventory, image_distance, list_chrome, read_inventory
+from .auto_vision import (ListScan, blank_inventory, image_distance, inventory_viewport,
+                          list_chrome, read_inventory)
 from .models import ImprintState, combination_label
+from .scan_diagnostics import save_scan_failure
 
 logger = get_logger(__name__)
 
@@ -17,9 +19,12 @@ class AutoControllerMixin:
         self._scan_run = None
         self._scan_window = None
         self._scan_chrome = None
+        self._scan_roi = None
         self._scan_intent = None
         self._scan_base_counts = (0, 0, 0)
         self._scan_reported_decomposed = 0
+        self._scan_trace_key = None
+        self._scan_trace_at = 0.
         super().__init__(*args, **kwargs)
         original_guard = self.input._guard_dispatch
 
@@ -125,6 +130,7 @@ class AutoControllerMixin:
                 self._scan_run = AutoRun(settings, self._auto_keep_policy, time.monotonic())
                 self._scan_window = None
                 self._scan_chrome = None
+                self._scan_roi = None
                 self._scan_base_counts = (self.stats.total_kept, self.stats.red_threshold_matches,
                                           self.stats.enhancement_clicks)
                 self._scan_reported_decomposed = 0
@@ -204,7 +210,8 @@ class AutoControllerMixin:
         run = self._scan_run
         if not run or not run.valid:
             raise BotError('自动处理记录已失效，请返回列表重新开始')
-        frame = analysis = None
+        frame = analysis = scan = None
+        timings = {}
         try:
             window = self.locator.find()
             if window is None:
@@ -222,9 +229,17 @@ class AutoControllerMixin:
             if not self.dry_run and not self.locator.is_foreground(window.hwnd):
                 raise AutoSafetyError('游戏窗口失去焦点，已暂停；回列表后重新开始')
             self._last_window = window
+            stage = time.monotonic()
             frame = self.capture.grab_window(window.rect)
+            timings['capture'] = round((time.monotonic()-stage)*1000, 1)
+            stage = time.monotonic()
             analysis = self.detector.analyze(frame)
+            timings['analyze'] = round((time.monotonic()-stage)*1000, 1)
             roi = tuple(self.feature_cfg['vision']['list_roi'])
+            if self._scan_roi is None and analysis.state == ImprintState.LIST:
+                self._scan_roi = inventory_viewport(frame, roi)
+                logger.info('AUTO_VIEWPORT configured=%s visible=%s', roi, self._scan_roi)
+            roi = self._scan_roi or roi
             empty = (analysis.state == ImprintState.UNKNOWN and run.expects_empty()
                      and self._scan_chrome is not None and blank_inventory(frame, roi)
                      and image_distance(self._scan_chrome, list_chrome(frame, roi)) <= 1.5)
@@ -237,13 +252,16 @@ class AutoControllerMixin:
                 self._scan_chrome = list_chrome(frame, roi)
             self._last_analysis = analysis
             self._update_stats(analysis, window)
+            stage = time.monotonic()
             scan = (ListScan((), roi, empty=True) if empty else
                     read_inventory(frame, roi) if analysis.state == ImprintState.LIST else None)
+            timings['inventory'] = round((time.monotonic()-stage)*1000, 1)
             if self.debug_mode.is_set():
                 # Legacy writer overwrites this tag; other tags also create
                 # timestamped files, which must not accumulate every frame.
-                self._save_debug(frame, analysis, tag='latest')
+                self._save_debug(frame.copy(), analysis, tag='latest')
             intent = run.step(analysis, frame, scan, time.monotonic())
+            self._trace_scan(run, scan, timings, intent)
             self._sync_scan_stats(run)
             if run.phase == Phase.DONE:
                 self.enabled.clear()
@@ -257,14 +275,21 @@ class AutoControllerMixin:
         except Exception as exc:
             message = str(exc)
             run.message = message
+            if not hasattr(run, 'failed_phase'):
+                run.failed_phase = run.phase
             self.enabled.clear()
+            self._trace_scan(run, scan, timings, force=True)
             self._invalidate_scan()
             self.stats.auto_phase = '保护暂停'
             self.stats.last_action = message
             self.stats.last_error = message
             if frame is not None and analysis is not None:
                 try:
-                    self._save_debug(frame, analysis, tag='auto_safety_stop')
+                    save_scan_failure(frame, scan, run, timings)
+                except Exception as debug_exc:
+                    logger.warning('保存自动扫描原始证据失败: %s', debug_exc)
+                try:
+                    self._save_debug(frame.copy(), analysis, tag='auto_safety_stop')
                 except Exception as debug_exc:
                     # Diagnostic failures must neither hide the original
                     # cause nor defeat the input stop.
@@ -272,6 +297,23 @@ class AutoControllerMixin:
             self._record_operation(f'AUTO_SAFETY_STOP {message}')
             self._emit_stats()
             raise BotError(message) from exc
+
+    def _trace_scan(self, run, scan, timings, intent=None, *, force=False):
+        key = (run.phase, run.scrolls, run.seeking_top, run.pass_number,
+               scan.uncertain if scan else None, intent.kind if intent else None)
+        now = time.monotonic()
+        if not force and key == self._scan_trace_key and now-self._scan_trace_at < 2:
+            return
+        self._scan_trace_key, self._scan_trace_at = key, now
+        logger.info('AUTO_TRACE phase=%s elapsed=%.2fs top=%s pass=%s scrolls=%s '
+                    'stable=%s readable=%s cards=%s uncertain=%s issues=%s '
+                    'motion=%s timings_ms=%s action=%s message=%s',
+                    getattr(run, 'failed_phase', run.phase).name, now-run.phase_at,
+                    run.seeking_top, run.pass_number, run.scrolls,
+                    run.stable_frames, run.readable_frames,
+                    len(scan.cards) if scan else 0, scan.uncertain if scan else None,
+                    scan.issues if scan else (), run.last_motion, timings,
+                    intent.kind if intent else None, run.message)
 
     def _dispatch_scan(self, run, intent, window, analysis):
         # Mode/settings/start changes share this lock. Pause/Esc still clear
@@ -309,7 +351,7 @@ class AutoControllerMixin:
             if intent.kind == 'select':
                 if latest.state != ImprintState.LIST:
                     raise AutoSafetyError('选卡前列表状态改变，取消点击')
-                scan = read_inventory(latest_frame, self.feature_cfg['vision']['list_roi'])
+                scan = read_inventory(latest_frame, self._scan_roi or self.feature_cfg['vision']['list_roi'])
                 if scan.uncertain or not any(
                         abs(c.x-intent.point[0]) <= 2 and abs(c.y-intent.point[1]) <= 2
                         and c.elements == run.item.initial for c in scan.candidates):

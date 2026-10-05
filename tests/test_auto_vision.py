@@ -5,12 +5,66 @@ import unittest
 import cv2
 import numpy as np
 
-from imprint_decompose.auto_vision import blank_inventory, list_chrome, read_inventory, scroll_displacement
+from imprint_decompose.auto_vision import (blank_inventory, inventory_viewport, list_chrome,
+                                           read_inventory, scroll_displacement)
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 
 
 class InventoryVisionTests(unittest.TestCase):
+    def test_bottom_navigation_is_excluded_but_dark_artwork_is_not(self):
+        frame = np.full((1020, 550, 3), (110, 127, 141), np.uint8)
+        roi = (20, 680, 530, 970)
+        self.assertEqual(inventory_viewport(frame, roi), roi)
+        frame[948:] = (55, 55, 55)
+        self.assertEqual(inventory_viewport(frame, roi), (20, 680, 530, 948))
+        frame[:] = (110, 127, 141)
+        frame[948:, 200:300] = (55, 55, 55)
+        self.assertEqual(inventory_viewport(frame, roi), roi)
+        frame[:] = 0  # an entirely unknown black screen is not a nav edge
+        self.assertEqual(inventory_viewport(frame, roi), roi)
+
+    def test_hidden_bottom_slots_are_partial_cards_not_recognition_errors(self):
+        source = cv2.imread(str(FIXTURES / 'inventory_five.png'))[125:357, 20:488]
+        roi = (20, 680, 530, 970)
+        for offset in (15, 20, 25):
+            with self.subTest(offset=offset):
+                frame = np.full((1020, 550, 3), (110, 127, 141), np.uint8)
+                frame[680+offset:680+offset+len(source), 20:488] = source
+                frame[948:] = (55, 55, 55)
+                # Reproduce the old failure after a scroll: artwork is
+                # visible but its slots are covered by fixed navigation.
+                self.assertTrue(read_inventory(frame, roi).uncertain)
+                scan = read_inventory(frame, inventory_viewport(frame, roi))
+                self.assertFalse(scan.uncertain, scan.issues)
+                self.assertTrue(scan.clipped_bottom)
+                self.assertEqual(len(scan.cards), 10)
+                self.assertEqual(scan.candidates, ())
+
+    def test_artwork_fragments_are_not_extra_slots_at_scrolled_offsets(self):
+        source = cv2.imread(str(FIXTURES / 'inventory_mixed.png'))[107:348, 20:488]
+        for offset in (0, 50, 60, 61, 65, 70):
+            with self.subTest(offset=offset):
+                frame = np.full((1020, 550, 3), (110, 127, 141), np.uint8)
+                height = min(len(source), 290-offset)
+                frame[680+offset:680+offset+height, 20:488] = source[:height]
+                scan = read_inventory(frame, (20, 680, 530, 970))
+                self.assertFalse(scan.uncertain, scan.issues)
+                self.assertEqual(len(scan.cards), 15)
+                self.assertEqual([c.column for c in scan.candidates], [2, 3, 4])
+
+    def test_missing_middle_columns_do_not_renumber_fifth_column(self):
+        frame = cv2.imread(str(FIXTURES / 'inventory_two.png'))
+        # Destroy two slot strips but retain their artwork as missing-card
+        # evidence. The remaining gap is THREE columns, not one column.
+        for sy in (105, 195, 284):
+            frame[sy-9:sy+10, 208:365] = (110, 127, 141)
+        scan = read_inventory(frame, (20, 60, 475, 298))
+        right = [c for c in scan.cards if c.x > 375]
+        self.assertTrue(right)
+        self.assertTrue(all(c.column == 4 for c in right))
+        self.assertTrue(scan.uncertain)
+
     def test_original_five_all_protected(self):
         frame = cv2.imread(str(FIXTURES / 'inventory_five.png'))
         scan = read_inventory(frame, (20, 125, 488, 357))

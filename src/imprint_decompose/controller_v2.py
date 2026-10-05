@@ -6,6 +6,7 @@ import win32gui
 
 from .game_digit_templates import install_game_digit_templates
 from .digit_ocr_fallback import install_digit_ocr_fallback
+from .detector_runtime import install_state_first_analysis
 from .auto_controller import AutoControllerMixin
 from .controller import (
     BotError,
@@ -250,6 +251,7 @@ class ImprintDecomposeController(AutoControllerMixin, BaseController):
         self.input.locator = self.locator
         install_detail_slot_alignment(self.detector, feature_cfg)
         install_game_digit_templates(self.detector)
+        install_state_first_analysis(self.detector)
         install_digit_ocr_fallback(self.detector, feature_cfg)
         self._enhancement_red_threshold = 20.0
         self.stats.red_threshold_matches = 0

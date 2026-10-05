@@ -1,5 +1,6 @@
 """Adapter tests use a recording backend only, never Windows input."""
 import unittest
+import json
 import tempfile
 import time
 from pathlib import Path
@@ -196,6 +197,25 @@ class AutomaticAdapterTests(unittest.TestCase):
             self.assertEqual([p.name for p in Path(folder).iterdir()], ['imprint_latest.png'])
             self.assertEqual(cv2.imread(str(Path(folder) / 'imprint_latest.png')).shape, self.frame.shape)
 
+    def test_visible_viewport_is_frozen_until_restart_and_used_for_selection_recheck(self):
+        self.c.detector.analyze.return_value = observation()
+        roi = (20, 680, 530, 948)
+        with patch('imprint_decompose.auto_controller.inventory_viewport', return_value=roi) as viewport, \
+             patch('imprint_decompose.auto_controller.read_inventory', return_value=inventory(2)) as reader:
+            self.c._tick()
+            self.c._tick()
+            viewport.assert_called_once()
+            self.assertEqual(reader.call_args.args[1], roi)
+            rig = Rig()
+            rig.run.seeking_top = False
+            intent = rig.command(observation())
+            self.c._scan_run = rig.run
+            self.c._dispatch_scan(rig.run, intent, self.window, observation())
+            self.assertEqual(reader.call_args.args[1], roi)
+        self.c.stop()
+        self.c.start()
+        self.assertIsNone(self.c._scan_roi)
+
     def test_safety_stop_really_writes_debug_image_and_revokes_inputs(self):
         self.c.detector.analyze.return_value = observation()
         self.c._scan_run.step = Mock(side_effect=AutoSafetyError('test safety stop'))
@@ -208,6 +228,11 @@ class AutomaticAdapterTests(unittest.TestCase):
             image = Path(folder) / 'imprint_auto_safety_stop_latest.png'
             self.assertTrue(image.is_file())
             self.assertEqual(cv2.imread(str(image)).shape, self.frame.shape)
+            raw = Path(folder) / 'imprint_auto_failure_raw_latest.png'
+            np.testing.assert_array_equal(cv2.imread(str(raw)), self.frame)
+            metadata = json.loads((Path(folder) / 'imprint_auto_failure_latest.json').read_text(encoding='utf-8'))
+            self.assertEqual(metadata['phase'], 'LIST')
+            self.assertEqual(metadata['scan']['cards'][0]['column'], 0)
         self.assertFalse(self.c.enabled.is_set())
         self.assertFalse(self.c._scan_run.valid)
         self.assertEqual(self.c.input.backend.clicks, [])
@@ -217,6 +242,7 @@ class AutomaticAdapterTests(unittest.TestCase):
         self.c.detector.analyze.return_value = observation()
         self.c._scan_run.step = Mock(side_effect=AutoSafetyError('test safety stop'))
         with patch.object(self.c, '_save_debug', autospec=True, side_effect=OSError('test disk failure')), \
+             patch('imprint_decompose.auto_controller.save_scan_failure', side_effect=OSError('raw disk failure')), \
              patch('imprint_decompose.auto_controller.read_inventory', return_value=inventory(5)), \
              self.assertLogs('imprint_decompose.auto_controller', level='WARNING') as logs:
             with self.assertRaisesRegex(BotError, 'test safety stop'):

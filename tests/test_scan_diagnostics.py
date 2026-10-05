@@ -1,0 +1,35 @@
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import cv2
+import numpy as np
+
+from imprint_decompose.scan_diagnostics import save_scan_failure
+from test_auto_mode import Rig
+
+
+class ScanDiagnosticsTests(unittest.TestCase):
+    def test_repeated_reports_overwrite_bounded_raw_evidence(self):
+        rig = Rig()
+        rig.run.scroll_before = np.full((290, 510, 3), 10, np.uint8)
+        with tempfile.TemporaryDirectory() as directory, \
+                patch('tower_bot.config.debug_dir', return_value=Path(directory)):
+            for value in (25, 30, 35):
+                rig.frame[:] = value
+                save_scan_failure(rig.frame, rig.scan, rig.run, {'analyze': 22.})
+            self.assertEqual(len(list(Path(directory).iterdir())), 4)
+            metadata = json.loads((Path(directory) / 'imprint_auto_failure_latest.json').read_text(encoding='utf-8'))
+            self.assertEqual(metadata['timings_ms'], {'analyze': 22.})
+            np.testing.assert_array_equal(cv2.imread(str(Path(directory) / metadata['images']['raw'])), rig.frame)
+            np.testing.assert_array_equal(cv2.imread(str(Path(directory) / metadata['images']['before'])), rig.run.scroll_before)
+            rig.run.scroll_before = None
+            save_scan_failure(rig.frame, None, rig.run, {})
+            metadata = json.loads((Path(directory) / 'imprint_auto_failure_latest.json').read_text(encoding='utf-8'))
+            self.assertEqual(set(metadata['images']), {'raw'})
+
+
+if __name__ == '__main__':
+    unittest.main()
