@@ -119,10 +119,30 @@ class InventoryVisionTests(unittest.TestCase):
         self.assertEqual(scroll_displacement(after, before, 190), 70)
         self.assertIsNone(scroll_displacement(before, texture[300:590], 190))
 
+    def test_small_live_boundary_probe_is_visible_but_one_pixel_jitter_is_not(self):
+        texture = np.random.default_rng(31).integers(0, 256, (600, 510, 3), dtype=np.uint8)
+        before = texture[:270]
+        for distance in (2, 3, 4, 5, 7):
+            with self.subTest(distance=distance):
+                self.assertEqual(scroll_displacement(before, texture[distance:distance+270], 170), -distance)
+        self.assertIsNone(scroll_displacement(before, texture[1:271], 170))
+
     def test_identical_rows_are_not_unique_scroll_identity(self):
         row = np.random.default_rng(3).integers(0, 256, (90, 510, 3), dtype=np.uint8)
         frame = np.concatenate([row]*4)[:290]
         self.assertIsNone(scroll_displacement(frame, frame.copy(), 190))
+
+    def test_fixed_toolbar_over_repeated_art_does_not_hide_unique_slot_motion(self):
+        rng = np.random.default_rng(21)
+        row = rng.integers(40, 200, (90, 510, 3), dtype=np.uint8)
+        texture = np.concatenate([row]*8)
+        header = rng.integers(0, 256, (24, 510, 3), dtype=np.uint8)
+        for index in range(8):
+            texture[index*90+60:index*90+66] = rng.integers(0, 256, (6, 510, 3), dtype=np.uint8)
+        before, after = texture[:270].copy(), texture[82:352].copy()
+        before[:24] = after[:24] = header
+        self.assertEqual(scroll_displacement(before, after, 170), -82)
+        self.assertEqual(scroll_displacement(after, before, 170), 82)
 
     def test_positive_short_page_and_empty_surface_evidence(self):
         source = cv2.imread(str(FIXTURES / 'inventory_two.png'))

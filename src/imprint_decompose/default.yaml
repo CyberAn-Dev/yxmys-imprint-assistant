@@ -15,8 +15,8 @@ vision:
   detail_slot_y_search_min_offset: -25
   detail_slot_y_search_max_offset: 30
 
-# Automatic mode uses one large upward reposition, then verified single-notch
-# boundary checks and downward traversal. Legacy
+# Automatic mode calibrates small wheel steps from verified pixel movement;
+# boundary probe/restore always use one notch. Legacy
 # auto_scroll_rows / drag fallback settings do not authorize automatic input.
 automatic:
   max_items: 1600

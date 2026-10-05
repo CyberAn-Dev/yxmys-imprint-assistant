@@ -13,6 +13,9 @@ def save_scan_failure(frame, scan, run, timings):
     folder.mkdir(parents=True, exist_ok=True)
     prefix = 'imprint_auto_failure_'
     images = {'raw': frame}
+    if run.identity_reference is not None:
+        images['identity_before'] = run.identity_reference
+        images['identity_after'] = run._identity(frame)
     if run.scroll_before is not None:
         images['before'] = run.scroll_before
     if scan is not None:
@@ -33,6 +36,7 @@ def save_scan_failure(frame, scan, run, timings):
         'seeking_top': run.seeking_top, 'scroll_kind': run.scroll_kind,
         'motion': run.last_motion, 'stable_frames': run.stable_frames,
         'readable_frames': run.readable_frames, 'timings_ms': timings,
+        'identity_roi': run.identity_roi, 'identity_difference': run.identity_difference,
         'scan': asdict(scan) if scan is not None else None, 'images': written,
     }
     (folder / (prefix + 'latest.json')).write_text(

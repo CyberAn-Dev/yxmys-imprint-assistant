@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 import math
 
-from .auto_vision import image_distance, list_image, scroll_displacement
+from .auto_vision import image_distance, list_image, scroll_displacement, scroll_motion_limit
 from .models import ImprintState
 
 
@@ -92,19 +92,26 @@ class AutoRun:
     STABLE_SECONDS = .25
     LIST_STABLE_SECONDS = .20
     RESULT_SECONDS = .40
+    ENHANCE_STABLE_SECONDS = .18
     SCROLL_SETTLE = .30
     # Modestly faster than downward scanning, with observation after every
     # step. Never fire a blind whole-inventory jump at startup or on rescan.
     TOP_SEEK_NOTCHES = 2
+    MAX_SCROLL_NOTCHES = 32
+    TARGET_SCROLL_PIXELS = 180
+    TOP_SCROLL_PIXELS = 90
     TIMEOUT = 8.0
     STILL_ATTEMPTS = 2
 
-    def __init__(self, settings, keep_policy, now, *, identity_roi=(345, 150, 465, 250)):
+    def __init__(self, settings, keep_policy, now, *, identity_roi=None):
         self.settings = settings
         self.keep_policy = keep_policy
         self.started = self.phase_at = now
         self.phase = Phase.LIST
-        self.identity_roi = identity_roi
+        self.fixed_identity_roi = identity_roi
+        self.identity_roi = identity_roi or (310, 261, 490, 301)
+        self.identity_reference = None
+        self.identity_difference = None
         self.pending = None
         self.sequence = 0
         self.item = None
@@ -114,6 +121,10 @@ class AutoRun:
         self.candidates = 0
         self.seeking_top = True
         self.top_seek_notches = self.TOP_SEEK_NOTCHES
+        self.top_seek_limit = self.MAX_SCROLL_NOTCHES
+        self.down_notches = 1
+        self.sent_scroll_notches = 1
+        self.scroll_pixels_per_notch = {1: 0., -1: 0.}
         self.message = '自动扫描：小幅上滑检查新刻印，到顶后开始扫描'
         self.stable_key = None
         self.stable_since = now
@@ -209,8 +220,12 @@ class AutoRun:
         if intent.kind == 'scroll':
             if self.scroll_kind == 'top_seek':
                 return (self.seeking_top and self.item is None
-                        and self.top_seek_notches in (1, self.TOP_SEEK_NOTCHES)
+                        and 1 <= self.top_seek_notches <= self.top_seek_limit <= self.MAX_SCROLL_NOTCHES
                         and intent.wheel == self.top_seek_notches)
+            if self.scroll_kind == 'travel':
+                return (not self.seeking_top and self.item is None
+                        and 1 <= self.down_notches <= self.MAX_SCROLL_NOTCHES
+                        and intent.wheel == -self.down_notches)
             if abs(intent.wheel) != 1:
                 return False
         if intent.kind in ('enhance', 'keep'):
@@ -255,6 +270,7 @@ class AutoRun:
             self._transition(Phase.REWARD, now)
         elif kind == 'scroll':
             self.scrolls += 1
+            self.sent_scroll_notches = abs(intent.wheel)
             self._transition(Phase.SCROLL, now)
 
     def _identity(self, frame):
@@ -262,8 +278,10 @@ class AutoRun:
         return frame[y0:y1, x0:x1].copy()
 
     def _validate_identity(self, frame):
-        if self.item.identity is not None and image_distance(self.item.identity, self._identity(frame)) > 14:
-            self._fail('当前刻印图案发生变化，处理记录已失效；未分解')
+        if self.item.identity is not None:
+            self.identity_difference = image_distance(self.item.identity, self._identity(frame))
+            if self.identity_difference > 14:
+                self._fail('当前刻印名称发生变化，处理记录已失效；未分解')
 
     def _detail(self, analysis, frame, now):
         if analysis.state != ImprintState.DETAIL or not analysis.dismantle_ready:
@@ -274,7 +292,12 @@ class AutoRun:
             self.stable_key = None
             return None
         key = (elements, tuple(analysis.red_attribute_values), analysis.red_attribute_unreadable_count)
-        if not self._stable(key, now, result=True):
+        # Observe each slot increase once, then reuse that observation for
+        # the next enhancement. Final red-value decisions keep their longer
+        # stabilization time and destructive actions still recapture.
+        final_decision = self.phase == Phase.DETAIL and self.item and self.item.completed >= self.settings.rounds
+        delay = self.RESULT_SECONDS if final_decision else self.ENHANCE_STABLE_SECONDS
+        if not self._stable(key, now, delay=delay):
             return None
         s = self.item
         if not s or s.origin_filled != 2:
@@ -283,8 +306,17 @@ class AutoRun:
             if len(elements) != 2 or elements != s.initial:
                 self._fail('选卡详情与初始 2 属性候选不一致；原有 3/4/5 属性不会处理')
             s.opened = True
+            if self.fixed_identity_roi is None:
+                # The proficiency toast covers the artwork and enhancement
+                # changes its level badge. The red imprint name below both
+                # remains unchanged. Anchor it to the recognized slot row to
+                # tolerate the supported normalized title-bar offsets.
+                slot_y = getattr(analysis.detail, 'right_slot_y', 0) or 355
+                self.identity_roi = (310, slot_y-94, 490, slot_y-54)
             s.identity = self._identity(frame)
-            self._transition(Phase.DETAIL, now)
+            self.identity_reference = s.identity.copy()
+            self.identity_difference = 0.
+            self._transition(Phase.DETAIL, now, retain_stability=True)
             return None
         self._validate_identity(frame)
         if self.phase == Phase.ENHANCE:
@@ -295,7 +327,7 @@ class AutoRun:
                 self._fail('强化槽位没有按顺序增加 1 个，已暂停，未分解')
             s.current = elements
             s.completed += 1
-            self._transition(Phase.DETAIL, now)
+            self._transition(Phase.DETAIL, now, retain_stability=True)
             self.message = f'已确认强化成功 {s.completed}/{self.settings.rounds} 次'
             return None
         if elements != s.current:
@@ -333,10 +365,13 @@ class AutoRun:
         self.message = ('正在回到顶部' if self.seeking_top else '当前页无候选，小幅下滑')
         if kind == 'top_seek':
             self.message = f'小幅上滑 {self.top_seek_notches} 格，检查是否还有新刻印'
+        elif kind == 'travel':
+            self.message = f'当前页无候选，下滑 {self.down_notches} 格（按实际位移校准）'
         elif kind != 'travel':
             self.message = '正在往返验证滚轮与列表边界'
+        notches = self.top_seek_notches if kind == 'top_seek' else self.down_notches if kind == 'travel' else 1
         return self._intent('scroll', point=((x0+x1)//2, (y0+y1)//2),
-                            wheel=self.top_seek_notches if kind == 'top_seek' else direction,
+                            wheel=notches * direction,
                             reason=self.message)
 
     def _boundary(self, now, scan):
@@ -359,6 +394,7 @@ class AutoRun:
             self.pass_processed = 0
             self.seeking_top = True
             self.top_seek_notches = self.TOP_SEEK_NOTCHES
+            self.top_seek_limit = self.MAX_SCROLL_NOTCHES
             self.message = '已到达底部，回顶部复扫以检查补位或重排遗漏'
         else:
             self._transition(Phase.DONE, now)
@@ -370,6 +406,7 @@ class AutoRun:
         difference = image_distance(self.scroll_before, image)
         direction = self.scroll_direction
         self.last_motion = {'kind': self.scroll_kind, 'direction': direction,
+                            'notches': self.sent_scroll_notches,
                             'difference': round(difference, 3), 'displacement': None}
         if difference <= 1.5:
             if self.scroll_kind == 'probe':
@@ -398,7 +435,7 @@ class AutoRun:
             else:
                 self.next_scroll_kind = 'travel'
         else:
-            max_shift = max(1, image.shape[0] - 100)
+            max_shift = scroll_motion_limit(image.shape[0])
             displacement = scroll_displacement(self.scroll_before, image, max_shift)
             self.last_motion['displacement'] = displacement
             if (displacement is None and self.scroll_kind == 'top_seek'
@@ -408,12 +445,13 @@ class AutoRun:
                 # this unknown movement proves neither direction nor top and
                 # never authorizes selection. The next step must be verified.
                 self.top_seek_notches = 1
+                self.top_seek_limit = 1
                 self.still = 0
                 self.boundary_proven = False
                 self.boundary_image = None
                 self.next_scroll_kind = 'travel'
                 self._transition(Phase.LIST, now, retain_stability=True)
-                self.message = '上滑两格后重叠区域不足，改为每次一格继续核验'
+                self.message = '上滑后重叠区域不足，改为每次一格继续核验'
                 return
             if displacement is None or displacement * direction <= 0:
                 self._fail('无法验证滚动方向和重叠区域，可能跨过整行；已暂停，未宣称完成')
@@ -428,6 +466,25 @@ class AutoRun:
                 # Do not repeat three more upward/downward wheel commands.
                 self.next_scroll_kind = 'travel'
             else:
+                # Wheel settings/game sensitivity vary widely: the live game
+                # can move only 5-7 px per notch. Calibrate from verified
+                # motion, target two rows down / one row up, at most 2x per
+                # observed step. Probe/restore remain exact single notches.
+                target = min(self.TOP_SCROLL_PIXELS if self.seeking_top else self.TARGET_SCROLL_PIXELS,
+                             max(5, max_shift-8))
+                # A step clamped at an edge can be shorter than normal. Do
+                # not learn a falsely slow wheel from it and overshoot on
+                # the next pass. Retain the fastest verified rate per direction.
+                speed = max(self.scroll_pixels_per_notch[direction],
+                            abs(displacement) / self.sent_scroll_notches)
+                self.scroll_pixels_per_notch[direction] = speed
+                desired = max(1, int(target / speed))
+                limit = self.top_seek_limit if self.seeking_top else self.MAX_SCROLL_NOTCHES
+                next_notches = min(limit, self.sent_scroll_notches * 2, desired)
+                if self.seeking_top:
+                    self.top_seek_notches = max(min(2, limit), next_notches)
+                else:
+                    self.down_notches = next_notches
                 self.still = 0
                 self.boundary_proven = False
                 self.boundary_image = None

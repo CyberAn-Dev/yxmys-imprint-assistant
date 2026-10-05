@@ -296,6 +296,12 @@ def image_distance(a, b):
     return float(np.mean(cv2.absdiff(a, b)))
 
 
+def scroll_motion_limit(height):
+    """Maximum verifiable shift after excluding fixed chrome and one row."""
+    guard = 24 if height >= 180 else 0
+    return max(0, height-guard-90)
+
+
 def scroll_displacement(before, after, max_shift):
     """Return an unambiguous vertical displacement, or None.
 
@@ -304,10 +310,20 @@ def scroll_displacement(before, after, max_shift):
     """
     if before.shape != after.shape:
         return None
+    # The live normalized ROI may include the bottom edge of the fixed
+    # filter toolbar. Comparing it against scrolling artwork creates a false
+    # competing displacement exactly one repeated card-row away. Exclude a
+    # narrow top guard band from BOTH images, and still require a full row
+    # of overlap in the remaining moving area. Slot eligibility is unchanged.
+    if before.shape[0] >= 180:
+        before, after = before[24:], after[24:]
     height = before.shape[0]
     scores = []
     for dy in range(-min(max_shift, height - 90), min(max_shift, height - 90) + 1):
-        if abs(dy) < 5:
+        # Live single-notch boundary probes can move only 3-4 normalized
+        # pixels. Excluding all shifts below five hid their best match and
+        # let a repeated row compete with the wrong displacement instead.
+        if abs(dy) < 2:
             continue
         left = before[max(0, -dy):min(height, height-dy)]
         right = after[max(0, dy):min(height, height+dy)]

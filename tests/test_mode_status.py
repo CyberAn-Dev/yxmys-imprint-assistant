@@ -97,6 +97,7 @@ class ModeStatusTests(unittest.TestCase):
         self.c.start()
         self.events.clear()
         with patch('imprint_decompose.auto_controller.read_inventory', side_effect=ValueError('offline failure')), \
+             patch('imprint_decompose.auto_controller.save_scan_failure'), \
              patch.object(self.c, '_save_debug', autospec=True):
             with self.assertRaisesRegex(BotError, 'offline failure'):
                 self.c._tick()

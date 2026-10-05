@@ -12,6 +12,17 @@ from test_auto_mode import Rig
 
 
 class ScanDiagnosticsTests(unittest.TestCase):
+    def test_identity_reference_survives_invalidation_for_diagnostics(self):
+        rig = Rig()
+        rig.open()
+        rig.run.invalidate()
+        with tempfile.TemporaryDirectory() as directory, \
+                patch('tower_bot.config.debug_dir', return_value=Path(directory)):
+            save_scan_failure(rig.frame, None, rig.run, {})
+            metadata = json.loads((Path(directory) / 'imprint_auto_failure_latest.json').read_text(encoding='utf-8'))
+            self.assertEqual(metadata['identity_roi'], list(rig.run.identity_roi))
+            self.assertEqual(set(metadata['images']), {'raw', 'identity_before', 'identity_after'})
+
     def test_repeated_reports_overwrite_bounded_raw_evidence(self):
         rig = Rig()
         rig.run.scroll_before = np.full((290, 510, 3), 10, np.uint8)

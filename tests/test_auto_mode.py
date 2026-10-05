@@ -182,9 +182,69 @@ class AutomaticWorkflowTests(unittest.TestCase):
     def test_identity_change_halts(self):
         rig = Rig()
         rig.open()
-        rig.frame[150:250, 345:465] = 255
+        x0, y0, x1, y1 = rig.run.identity_roi
+        rig.frame[y0:y1, x0:x1] = 255
         with self.assertRaises(AutoSafetyError):
             rig.command(observation(State.DETAIL))
+
+    def test_proficiency_toast_and_level_badge_do_not_change_imprint_identity(self):
+        for slot_y in (332, 355):
+            with self.subTest(slot_y=slot_y):
+                rig = Rig(2)
+                rig.run.seeking_top = False
+                rig.ack(rig.command(observation()))
+                initial = observation(State.DETAIL)
+                initial.detail.right_slot_y = slot_y
+                for _ in range(3):
+                    rig.step(initial)
+                self.assertEqual(rig.run.identity_roi, (310, slot_y-94, 490, slot_y-54))
+                rig.ack(rig.command(initial))
+                rig.frame[130:208, 50:500] = 220  # proficiency popup
+                rig.frame[slot_y-119:slot_y-97, 435:465] = 180  # level 0 -> 10
+                result = observation(State.DETAIL, COLORS[:3])
+                result.detail.right_slot_y = slot_y
+                for _ in range(3):
+                    rig.step(result)
+                self.assertEqual(rig.run.item.completed, 1)
+                self.assertEqual(rig.run.identity_difference, 0)
+                self.assertEqual(rig.command(result).kind, 'enhance')
+
+    def test_verified_slot_growth_reuses_stability_for_next_enhancement(self):
+        rig = Rig(2)
+        rig.open()
+        rig.ack(rig.command(observation(State.DETAIL)))
+        sent_at = rig.now
+        result = observation(State.DETAIL, COLORS[:3])
+        for elapsed in (.01, .10):
+            self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+elapsed))
+            self.assertEqual(rig.run.item.completed, 0)
+        self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+.20))
+        self.assertEqual(rig.run.item.completed, 1)
+        command = rig.run.step(result, rig.frame, None, sent_at+.21)
+        self.assertEqual(command.kind, 'enhance')
+        self.assertTrue(rig.run.allows(command))
+
+    def test_final_filter_does_not_inherit_short_enhancement_delay(self):
+        rig = Rig(1)
+        rig.open()
+        rig.ack(rig.command(observation(State.DETAIL)))
+        sent_at = rig.now
+        result = observation(State.DETAIL, COLORS[:3])
+        for elapsed in (.01, .10, .20, .25, .35):
+            self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+elapsed))
+        command = rig.run.step(result, rig.frame, None, sent_at+.42)
+        self.assertEqual(command.kind, 'dismantle')
+
+    def test_imprint_name_change_after_enhancement_remains_protected(self):
+        rig = Rig(2)
+        rig.open()
+        rig.ack(rig.command(observation(State.DETAIL)))
+        x0, y0, x1, y1 = rig.run.identity_roi
+        rig.frame[y0:y1, x0:x1] = 255
+        with self.assertRaisesRegex(AutoSafetyError, '刻印名称发生变化'):
+            rig.command(observation(State.DETAIL, COLORS[:3]))
+        self.assertEqual(rig.actions.count('enhance'), 1)
+        self.assertNotIn('dismantle', rig.actions)
 
     def test_both_destructive_gates_require_initial_two_record(self):
         for gate in ('dismantle', 'confirm'):
@@ -338,6 +398,82 @@ class AutomaticWorkflowTests(unittest.TestCase):
 
 
 class ScrollWorkflowTests(unittest.TestCase):
+    def test_edge_clamped_short_step_does_not_inflate_next_pass_wheel(self):
+        rig = Rig()
+        rig.run.seeking_top = False
+        rig.scan = inventory(5)
+        texture = np.random.default_rng(14).integers(0, 256, (800, 510, 3), dtype=np.uint8)
+        rig.frame[680:970, 20:530] = texture[:290]
+        rig.ack(rig.command(observation()))
+        rig.frame[680:970, 20:530] = texture[70:360]
+        command = rig.command(observation())
+        self.assertEqual(command.wheel, -2)
+        rig.ack(command)
+        rig.frame[680:970, 20:530] = texture[105:395]
+        command = rig.command(observation())
+        self.assertEqual(command.wheel, -2)
+        self.assertEqual(rig.run.scroll_pixels_per_notch[-1], 70)
+
+    def test_larger_viewport_allows_two_row_target(self):
+        rig = Rig()
+        rig.frame = np.zeros((1200, 550, 3), np.uint8)
+        rig.run.seeking_top = False
+        rig.scan = ListScan(inventory(5).cards, (20, 680, 530, 1080))
+        texture = np.random.default_rng(13).integers(0, 256, (2000, 510, 3), dtype=np.uint8)
+        offset, wheels = 0, []
+        for _ in range(7):
+            rig.frame[680:1080, 20:530] = texture[offset:offset+400]
+            command = rig.command(observation())
+            wheels.append(abs(command.wheel))
+            offset -= command.wheel*6
+            rig.ack(command)
+        self.assertEqual(wheels, [1, 2, 4, 8, 16, 30, 30])
+
+    def test_slow_real_game_wheel_adapts_towards_two_rows_without_losing_overlap(self):
+        for seeking_top in (False, True):
+            with self.subTest(seeking_top=seeking_top):
+                rig = Rig()
+                rig.run.seeking_top = seeking_top
+                rig.scan = inventory(5)
+                texture = np.random.default_rng(11).integers(0, 256, (2000, 510, 3), dtype=np.uint8)
+                offset, wheels = 1000 if seeking_top else 0, []
+                for _ in range(6):
+                    rig.frame[680:970, 20:530] = texture[offset:offset+290]
+                    command = rig.command(observation())
+                    self.assertEqual(command.kind, 'scroll')
+                    self.assertTrue(rig.run.allows(command))
+                    wheels.append(abs(command.wheel))
+                    offset -= command.wheel * 6
+                    rig.ack(command)
+                self.assertEqual(wheels, [2, 4, 8, 15, 15, 15] if seeking_top else [1, 2, 4, 8, 16, 28])
+                self.assertTrue(all(wheel * 6 <= (90 if seeking_top else 168) for wheel in wheels))
+                self.assertTrue(all(b <= 2*a for a, b in zip(wheels, wheels[1:])))
+
+    def test_adapted_downward_step_still_cannot_skip_unobserved_rows(self):
+        rig = Rig()
+        rig.run.seeking_top = False
+        rig.run.down_notches = 8
+        rig.scan = inventory(5)
+        texture = np.random.default_rng(12).integers(0, 256, (1000, 510, 3), dtype=np.uint8)
+        rig.frame[680:970, 20:530] = texture[:290]
+        command = rig.command(observation())
+        self.assertEqual(command.wheel, -8)
+        rig.ack(command)
+        rig.frame[680:970, 20:530] = texture[500:790]
+        with self.assertRaisesRegex(AutoSafetyError, '无法验证滚动方向和重叠区域'):
+            rig.command(observation())
+
+    def test_downward_step_guard_rejects_stale_or_excessive_calibration(self):
+        rig = Rig()
+        rig.run.seeking_top = False
+        rig.scan = inventory(5)
+        command = rig.command(observation())
+        rig.run.down_notches = 2
+        self.assertFalse(rig.run.allows(command))
+        rig.run.down_notches = rig.run.MAX_SCROLL_NOTCHES+1
+        rig.run.pending = replace(command, wheel=-rig.run.down_notches)
+        self.assertFalse(rig.run.allows(rig.run.pending))
+
     def test_two_notch_ascent_repeats_only_after_observed_stable_movement(self):
         rig = Rig()
         rig.scan = inventory(2)
@@ -434,7 +570,7 @@ class ScrollWorkflowTests(unittest.TestCase):
         rig.run.item = object()
         self.assertFalse(rig.run.allows(command))
         rig.run.item = None
-        for invalid_wheel in (-2, 3, 240):
+        for invalid_wheel in (-2, rig.run.MAX_SCROLL_NOTCHES+1, 240):
             rig.run.top_seek_notches = invalid_wheel
             rig.run.pending = replace(command, wheel=invalid_wheel)
             self.assertFalse(rig.run.allows(rig.run.pending))
@@ -519,7 +655,7 @@ class ScrollWorkflowTests(unittest.TestCase):
             self.assertIsNone(rig.run.step(observation(), rig.frame, rig.scan, dispatched_at+elapsed))
         command = rig.run.step(observation(), rig.frame, rig.scan, dispatched_at+.31)
         self.assertIsNotNone(command)
-        self.assertEqual(command.wheel, -1)
+        self.assertEqual(command.wheel, -2)
 
     def test_already_at_top_stops_after_two_unchanged_steps_and_boundary_check(self):
         rig = Rig()
@@ -554,7 +690,7 @@ class ScrollWorkflowTests(unittest.TestCase):
         command = rig.step(observation())
         self.assertIsNotNone(command)
         self.assertEqual(command.kind, 'scroll')
-        self.assertEqual(command.wheel, -1)
+        self.assertEqual(command.wheel, -2)
 
     def test_coordinate_jitter_does_not_restart_slot_stability(self):
         rig = Rig()
