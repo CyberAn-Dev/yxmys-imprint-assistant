@@ -337,7 +337,92 @@ class AutomaticWorkflowTests(unittest.TestCase):
 
 
 class ScrollWorkflowTests(unittest.TestCase):
-    def test_top_confirmation_uses_four_wheels_not_eight(self):
+    def test_large_upward_jump_can_cross_pages_but_does_not_authorize_selection(self):
+        rig = Rig()
+        rig.scan = inventory(2)
+        texture = np.random.default_rng(8).integers(0, 256, (1900, 510, 3), dtype=np.uint8)
+        rig.frame[680:970, 20:530] = texture[1400:1690]
+        command = rig.command(observation())
+        self.assertEqual(command.wheel, rig.run.TOP_JUMP_NOTCHES)
+        self.assertEqual(rig.run.scroll_kind, 'top_jump')
+        rig.ack(command)
+        self.assertFalse(rig.run.top_jump_pending)
+        rig.frame[680:970, 20:530] = texture[:290]
+        self.assertIsNone(rig.step(observation()))
+        self.assertIsNone(rig.step(observation()))
+        verification = rig.step(observation())
+        self.assertEqual(verification.kind, 'scroll')
+        self.assertEqual(verification.wheel, 1)
+        self.assertTrue(rig.run.seeking_top)
+        self.assertIsNone(rig.run.item)
+
+    def test_large_jump_is_not_repeated_if_game_limits_scroll_distance(self):
+        rig = Rig()
+        rig.scan = inventory(2)
+        texture = np.random.default_rng(9).integers(0, 256, (900, 510, 3), dtype=np.uint8)
+        offset, wheels, selected = 420, [], False
+        for _ in range(120):
+            rig.frame[680:970, 20:530] = texture[offset:offset+290]
+            command = rig.step(observation())
+            if command:
+                if command.kind == 'select':
+                    self.assertEqual(offset, 0, 'must not accept a clamped jump as proof of top')
+                    selected = True
+                    break
+                wheels.append(command.wheel)
+                # Emulate a game that handles even a huge event as one notch.
+                offset = max(0, min(560, offset-(70 if command.wheel > 0 else -70)))
+                rig.ack(command)
+        self.assertTrue(selected)
+        self.assertEqual(wheels.count(rig.run.TOP_JUMP_NOTCHES), 1)
+        self.assertTrue(all(abs(wheel) == 1 for wheel in wheels[1:]))
+
+    def test_top_jump_guard_requires_pending_upward_reposition_and_no_item(self):
+        rig = Rig()
+        command = rig.command(observation())
+        self.assertTrue(rig.run.allows(command))
+        rig.run.seeking_top = False
+        self.assertFalse(rig.run.allows(command))
+        rig.run.seeking_top = True
+        rig.run.top_jump_pending = False
+        self.assertFalse(rig.run.allows(command))
+        rig.run.top_jump_pending = True
+        rig.run.item = object()
+        self.assertFalse(rig.run.allows(command))
+        rig.run.item = None
+        rig.run.invalidate()
+        self.assertFalse(rig.run.allows(command))
+
+    def test_downward_page_skip_remains_forbidden(self):
+        rig = Rig()
+        rig.run.seeking_top = False
+        rig.scan = inventory(5)
+        texture = np.random.default_rng(5).integers(0, 256, (1000, 510, 3), dtype=np.uint8)
+        rig.frame[680:970, 20:530] = texture[:290]
+        command = rig.command(observation())
+        self.assertEqual(command.wheel, -1)
+        rig.ack(command)
+        rig.frame[680:970, 20:530] = texture[500:790]
+        with self.assertRaisesRegex(AutoSafetyError, '无法验证滚动方向和重叠区域'):
+            for _ in range(4):
+                rig.step(observation())
+
+    def test_downward_scroll_wait_reduced_but_still_requires_three_stable_frames(self):
+        rig = Rig()
+        rig.run.seeking_top = False
+        rig.scan = inventory(5)
+        texture = np.random.default_rng(7).integers(0, 256, (600, 510, 3), dtype=np.uint8)
+        rig.frame[680:970, 20:530] = texture[:290]
+        rig.ack(rig.command(observation()))
+        dispatched_at = rig.now
+        rig.frame[680:970, 20:530] = texture[70:360]
+        for elapsed in (.06, .17, .28):
+            self.assertIsNone(rig.run.step(observation(), rig.frame, rig.scan, dispatched_at+elapsed))
+        command = rig.run.step(observation(), rig.frame, rig.scan, dispatched_at+.31)
+        self.assertIsNotNone(command)
+        self.assertEqual(command.wheel, -1)
+
+    def test_top_confirmation_starts_with_one_large_jump_then_verifies_boundary(self):
         rig = Rig()
         rig.scan = inventory(2)
         texture = np.random.default_rng(8).integers(0, 256, (600, 510, 3), dtype=np.uint8)
@@ -353,7 +438,7 @@ class ScrollWorkflowTests(unittest.TestCase):
                 offset = max(0, min(280, offset-command.wheel*70))
                 rig.ack(command)
         self.assertIsNotNone(selected)
-        self.assertEqual(wheels, [1, 1, -1, 1])
+        self.assertEqual(wheels, [rig.run.TOP_JUMP_NOTCHES, 1, -1, 1])
         self.assertEqual(offset, 0)
         self.assertLessEqual(rig.now, 4)
 
@@ -460,6 +545,7 @@ class ScrollWorkflowTests(unittest.TestCase):
         self.assertEqual(offset, 560)
         self.assertIn(1, wheels)
         self.assertIn(-1, wheels)
+        self.assertEqual(wheels.count(rig.run.TOP_JUMP_NOTCHES), 2)
 
     def test_unresponsive_scroll_does_not_claim_bottom(self):
         rig = Rig()

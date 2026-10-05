@@ -66,6 +66,24 @@ class AutomaticAdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.c.set_enhancement_settings(False, 1, 20)
 
+    def test_top_jump_reaches_backend_as_one_large_upward_event(self):
+        rig = Rig()
+        intent = rig.command(observation())
+        self.c._scan_run = rig.run
+        self.c._dispatch_scan(rig.run, intent, self.window, observation())
+        self.assertEqual(self.c.input.backend.scrolls, [(275, 825, rig.run.TOP_JUMP_NOTCHES)])
+        self.assertEqual(rig.run.phase, Phase.SCROLL)
+        self.assertFalse(rig.run.top_jump_pending)
+
+    def test_pause_cancels_undispatched_top_jump(self):
+        rig = Rig()
+        intent = rig.command(observation())
+        self.c._scan_run = rig.run
+        self.c.pause()
+        with self.assertRaises(AutoSafetyError):
+            self.c._dispatch_scan(rig.run, intent, self.window, observation())
+        self.assertEqual(self.c.input.backend.scrolls, [])
+
     def test_fresh_destructive_capture_and_ack(self):
         rig, intent, analysis = self.prepare()
         self.c._dispatch_scan(rig.run, intent, self.window, analysis)

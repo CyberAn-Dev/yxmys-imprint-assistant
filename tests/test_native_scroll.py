@@ -21,12 +21,12 @@ class NativeScrollTests(unittest.TestCase):
         self.enterContext(patch('pyautogui.scroll', side_effect=AssertionError('legacy wheel path')))
 
     def test_notches_are_signed_windows_wheel_deltas(self):
-        for notches in (1, -1, 3, -3):
+        for notches in (1, -1, 3, -3, 240):
             with self.subTest(notches=notches):
                 self.backend.scroll(1387, 977, notches)
                 self.move.assert_called_with(1387, 977, duration=0.05)
                 self.event.assert_called_with(win32con.MOUSEEVENTF_WHEEL, 0, 0, notches * 120, 0)
-        self.assertEqual(self.event.call_count, 4)
+        self.assertEqual(self.event.call_count, 5)
 
     def test_disabled_before_move_sends_nothing(self):
         self.enabled = False

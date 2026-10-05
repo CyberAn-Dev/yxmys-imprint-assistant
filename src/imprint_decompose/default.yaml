@@ -15,7 +15,8 @@ vision:
   detail_slot_y_search_min_offset: -25
   detail_slot_y_search_max_offset: 30
 
-# Automatic mode uses its own verified single-notch traversal. Legacy
+# Automatic mode uses one large upward reposition, then verified single-notch
+# boundary checks and downward traversal. Legacy
 # auto_scroll_rows / drag fallback settings do not authorize automatic input.
 automatic:
   max_items: 1600
