@@ -12,6 +12,37 @@ FIXTURES = Path(__file__).parent / 'fixtures'
 
 
 class InventoryVisionTests(unittest.TestCase):
+    def test_complete_slots_tight_to_bottom_override_artwork_height_guess(self):
+        # Reproduce the live .34-pixel margin failure with existing public
+        # fixtures, without adding the user's full gameplay/debug captures.
+        frame = cv2.imread(str(FIXTURES / 'inventory_two.png'))
+        for bottom in (291, 292, 293):
+            with self.subTest(bottom=bottom):
+                scan = read_inventory(frame, (20, 60, 475, bottom))
+                self.assertFalse(scan.uncertain, scan.issues)
+                self.assertFalse(scan.clipped_bottom)
+                self.assertEqual(len(scan.cards), 15)
+                self.assertEqual(len(scan.candidates), 10)
+                self.assertTrue(all(c.complete for c in scan.cards[-5:]))
+
+    def test_truly_cut_bottom_slot_outline_is_still_protected(self):
+        frame = cv2.imread(str(FIXTURES / 'inventory_two.png'))
+        for bottom in (288, 289, 290):
+            with self.subTest(bottom=bottom):
+                scan = read_inventory(frame, (20, 60, 475, bottom))
+                self.assertTrue(scan.clipped_bottom)
+                self.assertFalse(any(c.slot_y > 270 for c in scan.candidates))
+
+    def test_bottom_missing_grey_cannot_borrow_neighbor_valid_strip(self):
+        frame = cv2.imread(str(FIXTURES / 'inventory_two.png'))
+        baseline = read_inventory(frame, (20, 60, 475, 292))
+        c = baseline.cards[-1]
+        sx = round(c.x + 2*c.pitch)
+        frame[c.slot_y-9:c.slot_y+10, sx-8:sx+9] = (145, 145, 145)
+        scan = read_inventory(frame, (20, 60, 475, 292))
+        self.assertTrue(scan.clipped_bottom or scan.uncertain)
+        self.assertFalse(any(card.column == c.column and card.slot_y > 270 for card in scan.candidates))
+
     def test_bottom_navigation_is_excluded_but_dark_artwork_is_not(self):
         frame = np.full((1020, 550, 3), (110, 127, 141), np.uint8)
         roi = (20, 680, 530, 970)

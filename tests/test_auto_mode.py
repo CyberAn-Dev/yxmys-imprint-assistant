@@ -451,6 +451,24 @@ class AutomaticWorkflowTests(unittest.TestCase):
             rig.run._boundary(1, scan)
         self.assertNotEqual(rig.run.phase, Phase.DONE)
 
+    def test_verified_bottom_with_candidate_processes_it_before_claiming_done(self):
+        rig = Rig()
+        rig.run.seeking_top = False
+        rig.run._boundary(0, rig.scan)
+        self.assertEqual(rig.run.phase, Phase.LIST)
+        self.assertEqual(rig.command(observation()).kind, 'select')
+
+    def test_inventory_mutation_clears_scroll_response_evidence(self):
+        rig = Rig()
+        result = rig.enhance(result=(COLORS[0], COLORS[1], COLORS[1]))
+        rig.ack(rig.command(observation(State.DETAIL, result)))
+        rig.run.scroll_leg_moved = True
+        rig.run.scroll_end_clamped = True
+        for _ in range(3):
+            rig.step(observation(), inventory(5))
+        self.assertFalse(rig.run.scroll_leg_moved)
+        self.assertFalse(rig.run.scroll_end_clamped)
+
 
 class ScrollWorkflowTests(unittest.TestCase):
     def test_edge_clamped_short_step_does_not_inflate_next_pass_wheel(self):
@@ -590,7 +608,8 @@ class ScrollWorkflowTests(unittest.TestCase):
                 self.assertTrue(selected)
                 self.assertEqual(wheels[-4:], [2, 2, -1, 1])
                 self.assertTrue(all(wheel == 2 for wheel in wheels[:-4]))
-                self.assertGreater(len(wheels), 4)
+                self.assertEqual(rig.run.last_boundary['method'], 'probe_restore')
+                self.assertEqual(rig.run.last_boundary['stationary_attempts'], 2)
 
     def test_game_that_caps_wheel_event_to_one_notch_still_reaches_top(self):
         rig = Rig()
@@ -835,10 +854,70 @@ class ScrollWorkflowTests(unittest.TestCase):
         self.assertEqual(rig.run.phase, Phase.DONE)
         self.assertEqual(rig.run.pass_number, 2)
         self.assertEqual(offset, 560)
-        self.assertIn(1, wheels)
+        self.assertIn(2, wheels)
         self.assertIn(-1, wheels)
         self.assertEqual(first_ascent_steps, {1: 2, 2: 2})
         self.assertTrue(all(abs(wheel) <= 2 for wheel in wheels))
+
+    def test_confirmed_motion_plus_one_ignored_event_does_not_claim_boundary(self):
+        rig = Rig()
+        texture = np.random.default_rng(46).integers(0, 256, (900, 510, 3), dtype=np.uint8)
+        rig.frame[680:970, 20:530] = texture[420:710]
+        rig.ack(rig.command(observation()))
+        rig.frame[680:970, 20:530] = texture[280:570]
+        rig.ack(rig.command(observation()))
+        self.assertTrue(rig.run.scroll_leg_moved)
+        retry = rig.command(observation())  # one ignored wheel, not two
+        self.assertEqual(rig.run.still, 1)
+        self.assertTrue(rig.run.seeking_top)
+        rig.ack(retry)
+        rig.frame[680:970, 20:530] = texture[140:430]
+        self.assertEqual(rig.command(observation()).kind, 'scroll')
+        self.assertEqual(rig.run.still, 0)
+        self.assertTrue(rig.run.seeking_top)
+
+    def test_small_nonempty_inventory_finishes_without_redundant_boundary_roundtrips(self):
+        def replay(force_probe):
+            rig = Rig()
+            rig.scan = inventory(5, 4, 5, 4, 5)
+            texture = np.random.default_rng(45).integers(0, 256, (350, 510, 3), dtype=np.uint8)
+            offset, wheels = 31, []
+            for _ in range(120):
+                rig.frame[680:970, 20:530] = texture[offset:offset+290]
+                if force_probe:
+                    rig.run.scroll_leg_moved = False  # old always-probe path
+                command = rig.step(observation())
+                if command:
+                    self.assertEqual(command.kind, 'scroll')
+                    wheels.append(command.wheel)
+                    offset = max(0, min(31, offset-command.wheel*7))
+                    rig.ack(command)
+                if rig.run.phase == Phase.DONE:
+                    self.assertEqual(offset, 31)
+                    return wheels, rig.now
+            self.fail('inventory did not finish')
+        old_wheels, old_time = replay(True)
+        new_wheels, new_time = replay(False)
+        self.assertEqual((len(old_wheels), len(new_wheels)), (13, 9))
+        self.assertLess(new_time, old_time)
+
+    def test_wheel_stops_responding_after_normal_motion_is_not_a_boundary(self):
+        rig = Rig()
+        rig.scan = inventory(5)
+        rig.run.seeking_top = False
+        texture = np.random.default_rng(47).integers(0, 256, (900, 510, 3), dtype=np.uint8)
+        rig.frame[680:970, 20:530] = texture[:290]
+        rig.ack(rig.command(observation()))
+        rig.frame[680:970, 20:530] = texture[70:360]
+        rig.ack(rig.command(observation()))
+        self.assertTrue(rig.run.scroll_leg_moved)
+        self.assertFalse(rig.run.scroll_end_clamped)
+        with self.assertRaisesRegex(AutoSafetyError, '正反滚轮都未产生可验证移动'):
+            for _ in range(30):
+                command = rig.step(observation())
+                if command:
+                    rig.ack(command)
+        self.assertNotEqual(rig.run.phase, Phase.DONE)
 
     def test_unresponsive_scroll_does_not_claim_bottom(self):
         rig = Rig()

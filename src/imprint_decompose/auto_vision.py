@@ -77,6 +77,15 @@ def _element(hues):
     return None
 
 
+def _slot_outer_radius(pitch):
+    """Integer footprint used to verify a slot, including its dark outline."""
+    return max(max(3, round(pitch * .25)) + 2, round(pitch * .5))
+
+
+def _bottom_slots_visible(card, bottom):
+    return card.slot_y + _slot_outer_radius(card.pitch) < bottom - 1
+
+
 def inventory_viewport(frame, roi):
     """Exclude an intruding fixed bottom navigation bar, not a partial row.
 
@@ -182,12 +191,16 @@ def read_inventory(frame, roi):
                     # Neutral grey centre AND its dark outline are required.
                     grey = ((patch[:, :, 1] < 42) & (patch[:, :, 2] >= 55)
                             & (patch[:, :, 2] <= 155))
-                    outer = max(radius + 2, round(pitch * .48))
+                    outer = _slot_outer_radius(pitch)
                     border = hsv[sy-outer:sy+outer+1, sx-outer:sx+outer+1, 2]
                     if grey.mean() < .70 or active.mean() > .08 or (border < 85).mean() < .12:
                         valid = False
                         break
-            complete = sy - pitch * 5 >= y0 + 2 and sy + pitch * .6 < y1 - 2
+            # Judge the pixels actually sampled, not a fractional estimate
+            # plus a second margin. A fully visible final strip can sit just
+            # above the nav; the old test rejected it by as little as .34 px.
+            complete = (sy - pitch * 5 >= y0 + 2
+                        and sy + _slot_outer_radius(pitch) < y1 - 1)
             if valid:
                 row_cards.append(ScanCard(cx, round(sy - pitch * 2.7), sy,
                                           pitch, tuple(elements), complete))
@@ -233,6 +246,7 @@ def read_inventory(frame, roi):
                 issues.append(f'列位置异常@{c.x},{c.slot_y}')
             numbered.append(ScanCard(c.x, c.y, c.slot_y, c.pitch, c.elements, c.complete, column))
         cards = numbered
+        clipped_bottom = any(not _bottom_slots_visible(c, y1) for c in cards)
         # Do not mistake a missed middle/right card for an incomplete final
         # inventory row. Artwork only flags missing recognition; it never
         # authorizes selecting a card or infers its attribute count.
@@ -243,7 +257,15 @@ def read_inventory(frame, roi):
             cx, cy = cx+x0, cy+y0
             if (size >= 250 and 25 <= w <= 100 and 15 <= h <= 100
                     and cy > y1-pitch*5 and cy+pitch*3.3 >= y1-2):
-                clipped_bottom = True
+                # Artwork shape/centroid is only a missing-strip hint. A
+                # positively recognized five-slot strip on THIS card takes
+                # precedence over the rough artwork-to-slot height estimate.
+                matched = any(abs(c.x-cx) < c.pitch*1.5
+                              and abs(c.y-cy) < c.pitch*1.7
+                              and c.slot_y > cy
+                              and _bottom_slots_visible(c, y1) for c in cards)
+                if not matched:
+                    clipped_bottom = True
             if (size >= 250 and 25 <= w <= 100 and 25 <= h <= 100
                     and cy - pitch*2.3 > y0+2 and cy + pitch*3.3 < y1-2):
                 if not any(abs(c.x-cx) < pitch*1.5 and abs(c.y-cy) < pitch*1.7 for c in cards):

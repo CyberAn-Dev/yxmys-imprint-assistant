@@ -16,7 +16,8 @@ vision:
   detail_slot_y_search_max_offset: 30
 
 # Automatic mode calibrates small wheel steps from verified pixel movement;
-# boundary probe/restore always use one notch. Legacy
+# Optional boundary probe/restore use one notch; verified edge clamping plus
+# two stationary attempts can reuse evidence without a roundtrip. Legacy
 # auto_scroll_rows / drag fallback settings do not authorize automatic input.
 automatic:
   max_items: 1600

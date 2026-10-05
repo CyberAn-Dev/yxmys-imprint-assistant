@@ -336,12 +336,12 @@ class AutoControllerMixin:
         self._scan_trace_key, self._scan_trace_at = key, now
         logger.info('AUTO_TRACE phase=%s elapsed=%.2fs top=%s pass=%s scrolls=%s '
                     'stable=%s readable=%s cards=%s uncertain=%s issues=%s '
-                    'motion=%s timings_ms=%s action=%s message=%s',
+                    'motion=%s boundary=%s timings_ms=%s action=%s message=%s',
                     getattr(run, 'failed_phase', run.phase).name, now-run.phase_at,
                     run.seeking_top, run.pass_number, run.scrolls,
                     run.stable_frames, run.readable_frames,
                     len(scan.cards) if scan else 0, scan.uncertain if scan else None,
-                    scan.issues if scan else (), run.last_motion, timings,
+                    scan.issues if scan else (), run.last_motion, run.last_boundary, timings,
                     intent.kind if intent else None, run.message)
 
     def _dispatch_scan(self, run, intent, window, analysis):

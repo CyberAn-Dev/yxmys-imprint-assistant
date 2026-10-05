@@ -155,6 +155,9 @@ class AutoRun:
         self.readable_since = now
         self.last_elements = None
         self.session_evidence = None
+        self.scroll_leg_moved = False
+        self.scroll_end_clamped = False
+        self.last_boundary = None
 
     def expects_empty(self):
         return bool(self.single_page and self.item and self.item.outcome == 'decompose'
@@ -401,6 +404,13 @@ class AutoRun:
     def _boundary(self, now, scan):
         if scan.uncertain or not scan.cards:
             self._fail('边界画面已停稳，但槽位仍无法确认；未宣称完成：' + ', '.join(scan.issues))
+        self.last_boundary = {
+            'edge': 'top' if self.seeking_top else 'bottom',
+            'method': 'clamped_motion_then_still' if self.scroll_end_clamped else 'probe_restore',
+            'stationary_attempts': self.still, 'scrolls': self.scrolls,
+        }
+        self.scroll_leg_moved = False
+        self.scroll_end_clamped = False
         self.still = 0
         self.boundary_image = None
         self.boundary_proven = False
@@ -411,6 +421,8 @@ class AutoRun:
             self.message = '已验证顶部，按行从左到右扫描'
         elif scan.clipped_bottom:
             self._fail('已到滚动边界，但底部仍有被遮挡卡片；请检查窗口比例/列表边界，未宣称全部完成')
+        elif scan.candidates:
+            self.message = '已到达底部，先处理完整可见的初始 2 属性刻印'
         elif self.pass_processed:
             # A complete no-work sweep is required after mutations. This
             # catches cards shifted above the viewport by sorting/deletions.
@@ -422,7 +434,7 @@ class AutoRun:
             self.message = '已到达底部，回顶部复扫以检查补位或重排遗漏'
         else:
             self._transition(Phase.DONE, now)
-            self.message = '已验证到底且完整复扫无候选，自动处理完成'
+            self.message = '已验证到底且完整复扫无候选，当前筛选列表处理完成'
             return
         self._transition(Phase.LIST, now, retain_stability=True)
 
@@ -451,11 +463,20 @@ class AutoRun:
                 self._fail('边界往返验证未恢复原位置，已暂停')
             self.still += 1
             if self.still >= self.STILL_ATTEMPTS:
-                if self.boundary_proven:
-                    self._boundary(now, scan)
-                    return
-                self.boundary_image = image.copy()
-                self.next_scroll_kind = 'probe'
+                if self.scroll_leg_moved and self.scroll_end_clamped:
+                    # Recently verified motion became shorter than the
+                    # measured wheel distance (edge clamping), followed by
+                    # two separate stationary attempts. Reuse that evidence.
+                    # Ordinary motion alone is NOT enough: a wheel that stops
+                    # responding mid-list must still fail the reverse probe.
+                    # step() also requires stable readable slots before use.
+                    self.boundary_proven = True
+                    self.next_scroll_kind = 'travel'
+                else:
+                    # Startup at an edge / after inventory mutations: never
+                    # mistake an unresponsive wheel for a verified boundary.
+                    self.boundary_image = image.copy()
+                    self.next_scroll_kind = 'probe'
             else:
                 self.next_scroll_kind = 'travel'
         else:
@@ -470,6 +491,8 @@ class AutoRun:
                 # never authorizes selection. The next step must be verified.
                 self.top_seek_notches = 1
                 self.top_seek_limit = 1
+                self.scroll_leg_moved = False
+                self.scroll_end_clamped = False
                 self.still = 0
                 self.boundary_proven = False
                 self.boundary_image = None
@@ -490,6 +513,7 @@ class AutoRun:
                 # Do not repeat three more upward/downward wheel commands.
                 self.next_scroll_kind = 'travel'
             else:
+                self.scroll_leg_moved = True
                 # Wheel settings/game sensitivity vary widely: the live game
                 # can move only 5-7 px per notch. Calibrate from verified
                 # motion, target two rows down / one row up, at most 2x per
@@ -499,6 +523,8 @@ class AutoRun:
                 # A step clamped at an edge can be shorter than normal. Do
                 # not learn a falsely slow wheel from it and overshoot on
                 # the next pass. Retain the fastest verified rate per direction.
+                expected = self.scroll_pixels_per_notch[direction] * self.sent_scroll_notches
+                self.scroll_end_clamped = (expected >= 8 and abs(displacement)+3 < expected*.8)
                 speed = max(self.scroll_pixels_per_notch[direction],
                             abs(displacement) / self.sent_scroll_notches)
                 self.scroll_pixels_per_notch[direction] = speed
@@ -526,6 +552,9 @@ class AutoRun:
         self.processed += 1
         self.pass_processed += 1
         self.item = None
+        # Deletion/reordering invalidates earlier scroll-response evidence.
+        self.scroll_leg_moved = False
+        self.scroll_end_clamped = False
         self.still = 0
         self.boundary_proven = False
         self.boundary_image = None
