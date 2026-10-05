@@ -442,8 +442,8 @@ class ImprintDecomposeUI(BaseUI):
             self._label(frame, title, size=12, bold=True).pack(anchor='w', pady=(0, 5))
         return frame
 
-    def _segment(self, parent, variable, choices, command):
-        return SegmentedControl(parent, variable, command, choices)
+    def _segment(self, parent, variable, choices, command, *, width=None):
+        return SegmentedControl(parent, variable, command, choices, width=width)
 
     def _label(self, parent, text, *, size=10, **kwargs):
         widget = super()._label(parent, text, size=size, **kwargs)
@@ -481,76 +481,72 @@ class ImprintDecomposeUI(BaseUI):
         self._vars['program_status'] = tk.StringVar(value='已停止')
         self._label(head, '', textvariable=self._vars['program_status'], fg='#007aff',
                     bg=self.BG, bold=True, anchor='e').pack(side='right')
-        status = tk.Frame(outer, bg=self.BG)
+        status = self._resolution_panel = tk.Frame(outer, bg=self.FIELD, padx=10, pady=4)
         status.pack(fill='x', pady=(0, 6))
-        status.columnconfigure(0, weight=1)
-        status.columnconfigure(1, weight=1)
+        status.columnconfigure(2, weight=1)
         self._vars['window_status'] = tk.StringVar(value='未找到窗口')
         self._label(status, '', textvariable=self._vars['window_status'], fg=self.MUTED,
-                    bg=self.BG, size=9, anchor='w').grid(row=0, column=0, sticky='w')
+                    bg=self.FIELD, size=9, anchor='w').grid(row=0, column=0, columnspan=3, sticky='w')
         reference = self.controller.cfg['window']
         suggestion = f"建议分辨率：{reference['reference_width']}×{reference['reference_height']}"
         self._label(status, suggestion, fg=self.MUTED,
-                    bg=self.BG, size=9, anchor='w').grid(row=1, column=0, sticky='w')
+                    bg=self.FIELD, size=9, anchor='w').grid(row=1, column=0, sticky='w', padx=(0, 18))
         self._vars['current_resolution'] = tk.StringVar(value='当前分辨率：—')
         self._label(
             status, '', textvariable=self._vars['current_resolution'], fg=self.MUTED,
-            bg=self.BG, size=9, anchor='e',
-        ).grid(row=1, column=1, sticky='e')
+            bg=self.FIELD, size=9, anchor='w',
+        ).grid(row=1, column=1, sticky='w', padx=(0, 18))
         self._vars['usage_status'] = tk.StringVar(value='当前无法使用')
         self._usage_status_label = self._label(
             status, '', textvariable=self._vars['usage_status'], fg='#ff3b30',
-            bg=self.BG, size=9, bold=True, anchor='e',
+            bg=self.FIELD, size=9, bold=True, anchor='w',
         )
-        self._usage_status_label.grid(row=0, column=1, sticky='e')
+        self._usage_status_label.grid(row=1, column=2, sticky='w')
         toolbar = tk.Frame(outer, bg=self.BG)
         toolbar.pack(fill='x', pady=(0, 8))
         for text, command, color, hover, fg in (
             ('开始  F9', self.controller.start, '#0071e3', '#0077ed', 'white'),
-            ('暂停', self.controller.pause, '#ffffff', '#e5e5ea', self.TEXT),
+            ('暂停  Esc', self.controller.pause, '#ffffff', '#e5e5ea', self.TEXT),
             ('停止  F10', self.controller.stop, '#ff3b30', '#ff453a', 'white')):
             RoundedButton(toolbar, text=text, command=command, width=132,
                           bg=color, hover_bg=hover, fg=fg).pack(side='left', padx=(0, 10))
-        self._label(toolbar, 'Esc 暂停 · F11 调试', bg=self.BG,
-                    fg=self.MUTED, size=9).pack(side='right')
 
         reminder = tk.Frame(
-            outer, bg='#fff8e6', padx=14, pady=1,
-            highlightbackground='#ffd27a', highlightthickness=1,
+            outer, bg='#fff0cc', padx=14, pady=5,
+            highlightbackground='#e8a12a', highlightthickness=2,
         )
         reminder.pack(fill='x', pady=(0, 6))
         self._label(
-            reminder, '使用前请手动勾选“本次登录不再提醒”',
-            fg='#a65f00', bg='#fff8e6', size=9, bold=True,
+            reminder, '使用前必读：请手动勾选“本次登录不再提醒”',
+            fg='#914500', bg='#fff0cc', size=10, bold=True,
         ).pack(anchor='center')
 
         settings = self._panel(outer, '')
-        selection = tk.Frame(settings, bg=self.CARD)
-        selection.pack(fill='x', pady=(0, 6))
-        self._label(selection, '选择方式', bold=True).pack(side='left', padx=(0, 10))
+        settings.columnconfigure(2, weight=1)
+        self._label(settings, '选择方式', bold=True).grid(row=0, column=0, sticky='w', padx=(0, 8))
         self._selection_mode_var = tk.StringVar(value='auto' if self.controller.stats.auto_mode else 'manual')
-        self._segment(selection, self._selection_mode_var,
+        self._selection_switch = self._segment(settings, self._selection_mode_var,
                       [('手动选择', 'manual'), ('自动扫描', 'auto')],
-                      self._on_selection_mode_changed).pack(side='left')
-        self._label(selection, '自动仅处理初始 2 属性 · 原有 3/4/5 跳过',
-                    fg=self.MUTED, size=9).pack(side='right')
-        controls = tk.Frame(settings, bg=self.CARD)
-        controls.pack(fill='x')
-        actions = tk.Frame(controls, bg=self.CARD)
-        actions.pack(side='left', anchor='n', padx=(0, 14))
-        self._label(actions, '分解确认', bold=True).grid(row=0, column=0, sticky='w', padx=(0, 8))
-        ConfirmationSwitch(actions, self._confirmation_mode_var,
-                           self._on_confirmation_mode_changed).grid(row=0, column=1, sticky='w')
-        self._label(actions, '自动强化', bold=True).grid(row=1, column=0, sticky='w', pady=5)
-        EnhancementSwitch(actions, self._enhancement_enabled_var,
-                          self._on_enhancement_settings_changed, width=158).grid(row=1, column=1, sticky='w', pady=5)
-        self._label(actions, '强化次数', fg=self.MUTED, size=9).grid(row=2, column=0, sticky='w')
-        self._segment(actions, self._enhancement_rounds_var,
+                      self._on_selection_mode_changed, width=158)
+        self._selection_switch.grid(row=0, column=1, sticky='w', pady=(0, 4))
+        self._label(settings, '自动仅处理初始 2 属性 · 原有 3/4/5 跳过',
+                    fg=self.MUTED, size=9).grid(row=0, column=2, sticky='e', padx=(14, 0))
+        self._label(settings, '分解确认', bold=True).grid(row=1, column=0, sticky='w', padx=(0, 8))
+        self._confirmation_switch = ConfirmationSwitch(settings, self._confirmation_mode_var,
+                           self._on_confirmation_mode_changed)
+        self._confirmation_switch.grid(row=1, column=1, sticky='w', pady=(0, 4))
+        self._label(settings, '自动强化', bold=True).grid(row=2, column=0, sticky='w')
+        self._enhancement_switch = EnhancementSwitch(settings, self._enhancement_enabled_var,
+                          self._on_enhancement_settings_changed, width=158)
+        self._enhancement_switch.grid(row=2, column=1, sticky='w', pady=(0, 4))
+        self._label(settings, '强化次数', fg=self.MUTED, size=9).grid(row=3, column=0, sticky='w')
+        self._rounds_switch = self._segment(settings, self._enhancement_rounds_var,
                       [('1 次', '1'), ('2 次', '2'), ('3 次', '3')],
-                      self._on_enhancement_settings_changed).grid(row=2, column=1, sticky='w')
-        filters = self._filter_panel = tk.Frame(controls, bg=self.CARD, padx=8, pady=4,
+                      self._on_enhancement_settings_changed, width=158)
+        self._rounds_switch.grid(row=3, column=1, sticky='w')
+        filters = self._filter_panel = tk.Frame(settings, bg=self.CARD, padx=8, pady=8,
                                                 highlightbackground='#dedee3', highlightthickness=1)
-        filters.pack(side='right', fill='both', expand=True)
+        filters.grid(row=1, column=2, rowspan=3, sticky='new', padx=(14, 0))
         threshold_box = tk.Frame(filters, bg=self.CARD)
         threshold_box.pack(fill='x')
         self._label(threshold_box, '红色词条', fg=self.MUTED, size=9).pack(side='left', padx=(0, 5))
@@ -569,8 +565,6 @@ class ImprintDecomposeUI(BaseUI):
         self._threshold_note_var = tk.StringVar()
         self._enhancement_threshold_var.trace_add('write', self._update_threshold_note)
         self._update_threshold_note()
-        self._label(filters, '', textvariable=self._threshold_note_var,
-                    fg=self.MUTED, size=9).pack(anchor='w')
 
         metrics = self._panel(outer, '')
         for i, (title, key) in enumerate((

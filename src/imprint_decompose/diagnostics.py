@@ -43,6 +43,18 @@ def run(destination):
                 yield from descendants(child)
         segments = [widget for widget in descendants(ui.root) if isinstance(widget, SegmentedControl)]
         assert len(segments) == 6, 'all six choice groups must share one control style'
+        aligned = [ui._selection_switch, ui._confirmation_switch,
+                   ui._enhancement_switch, ui._rounds_switch]
+        assert len({widget.winfo_rootx() for widget in aligned}) == 1, 'left choices must align'
+        assert {widget.winfo_width() for widget in aligned} == {158}, 'left choices must have equal widths'
+        resolution_labels = ui._resolution_panel.winfo_children()
+        assert len({widget.winfo_rooty() for widget in resolution_labels[1:]}) == 1, 'resolutions and usability must share one row'
+        assert ui._usage_status_label.master is ui._resolution_panel
+        visible_labels = [widget.cget('text') for widget in descendants(ui.root)
+                          if widget.winfo_class() == 'Label']
+        assert not any('F11' in text for text in visible_labels), 'debug shortcut must not clutter toolbar'
+        assert not any(str(widget.cget('textvariable')) == str(ui._threshold_note_var)
+                       for widget in descendants(ui.root) if widget.winfo_class() == 'Label'), 'redundant filter note must be hidden'
         for segment in segments:
             assert segment._control_height == 36
             for item in segment.find_all():
