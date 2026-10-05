@@ -9,6 +9,8 @@ from .config import logs_dir
 
 
 _CONFIGURED = False
+MAX_LOG_BYTES = 1_000_000
+LOG_BACKUPS = 1
 
 
 def setup_logging(level: int = logging.INFO, log_file: Optional[Path] = None) -> None:
@@ -32,8 +34,8 @@ def setup_logging(level: int = logging.INFO, log_file: Optional[Path] = None) ->
         log_path.parent.mkdir(parents=True, exist_ok=True)
         file_handler = RotatingFileHandler(
             log_path,
-            maxBytes=2_000_000,
-            backupCount=3,
+            maxBytes=MAX_LOG_BYTES,
+            backupCount=LOG_BACKUPS,
             encoding="utf-8",
         )
         file_handler.setFormatter(formatter)

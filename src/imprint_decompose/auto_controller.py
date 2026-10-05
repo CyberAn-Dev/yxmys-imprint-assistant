@@ -31,6 +31,37 @@ class AutoControllerMixin:
                     raise BotError('自动扫描动作授权或截图已失效，取消输入')
         self.input._guard_dispatch = guarded_dispatch
 
+    def _project_scan_stats(self):
+        """Publish only the new scanner's state, never legacy traversal flags."""
+        self.stats.auto_mode = self._scan_mode_enabled
+        if not self._scan_mode_enabled:
+            return
+        self.stats.auto_filter = '仅本轮初始 2 属性；原有 3/4/5 跳过'
+        run = self._scan_run
+        if run is not None:
+            self.stats.auto_candidates = run.candidates
+            self.stats.auto_scrolled = run.scrolls
+            self.stats.auto_processed = run.processed
+            self.stats.auto_pass = run.pass_number
+            if run.item:
+                self.stats.enhancement_completed = run.item.completed
+
+    def _emit_stats(self):
+        # The legacy refresh and the UI window poll can both publish. Project
+        # inside the same RLock as refresh/settings, BEFORE copying/callback,
+        # so no intermediate "manual" snapshot escapes to the UI queue.
+        with self._auto_settings_lock:
+            self._project_scan_stats()
+            return super()._emit_stats()
+
+    def _update_stats(self, analysis, window):
+        with self._auto_settings_lock:
+            try:
+                return super()._update_stats(analysis, window)
+            finally:
+                # Also restore the shared stats if legacy diagnostics raise.
+                self._project_scan_stats()
+
     def _invalidate_scan(self):
         run = self._scan_run
         if run:
@@ -39,9 +70,11 @@ class AutoControllerMixin:
 
     def set_auto_mode(self, enabled):
         enabled = bool(enabled)
-        if self.enabled.is_set():
-            self.stop()
         with self._auto_settings_lock:
+            if enabled == self._scan_mode_enabled:
+                return
+            if self.enabled.is_set():
+                self.stop()
             self._invalidate_scan()
             self._scan_mode_enabled = enabled
             # Keep the unsafe legacy automatic traversal permanently disabled.
@@ -52,6 +85,8 @@ class AutoControllerMixin:
                 self.set_enhancement_settings(True, self._enhancement_target, self._enhancement_red_threshold)
             self.stats.auto_phase = '待开始' if enabled else '手动选卡'
             self.stats.last_action = '请回到刻印列表，F9 开始自动扫描' if enabled else '等待你手动选择刻印'
+            logger.info('选卡方式已更新: selection_mode=%s confirmation_mode=%s',
+                        'auto' if enabled else 'manual', self._confirmation_mode)
         self._emit_stats()
 
     def set_enhancement_settings(self, enabled, rounds, red_threshold_percent):
@@ -112,9 +147,9 @@ class AutoControllerMixin:
     def stop(self):
         self.enabled.clear()
         self._invalidate_scan()
-        super().stop()
         if self._scan_mode_enabled:
             self.stats.auto_phase = '已停止'
+        super().stop()
 
     def emergency_pause(self, reason='Esc 紧急暂停'):
         self.enabled.clear()
@@ -122,6 +157,8 @@ class AutoControllerMixin:
         self._pending_combination = None
         self._phase = 'IDLE'
         self._reset_enhancement_session()
+        if self._scan_mode_enabled:
+            self.stats.auto_phase = '已暂停'
         super().emergency_pause(reason)
 
     def shutdown(self):

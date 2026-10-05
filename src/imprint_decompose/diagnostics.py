@@ -35,6 +35,29 @@ def run(destination):
         assert controller.stats.auto_mode and controller.stats.enhancement_enabled
         assert not controller._auto_enabled, 'legacy traversal must stay disabled'
         assert not controller.enabled.is_set(), 'changing mode must not start automation'
+        # Replay the real legacy refresh, not a mocked stats updater. Inspect
+        # EVERY callback: a latest-only queue can hide intermediate bad modes.
+        from .models import ImprintFrameAnalysis, ImprintState
+        from tower_bot.models import Rect, WindowInfo
+        analysis = ImprintFrameAnalysis(ImprintState.LIST, None, .1, 0, 1, 15,
+                                        False, False, 'offline package refresh')
+        window = WindowInfo(123, 'offline self-test', Rect(0, 0, 550, 1020))
+        callback = controller.on_stats
+        snapshots, repaint = [], []
+        controller.on_stats = snapshots.append
+        trace = ui._selection_mode_var.trace_add('write', lambda *_: repaint.append(ui._selection_mode_var.get()))
+        try:
+            for _ in range(12):
+                controller._update_stats(analysis, window)
+                controller.refresh_window_info()  # locator returns None, never queries the game
+            assert snapshots and all(s.auto_mode for s in snapshots), 'mode flipped during refresh'
+            for snapshot in snapshots:
+                ui._apply_stats(snapshot)
+                assert ui._selection_mode_var.get() == 'auto'
+            assert not repaint, 'unchanged mode control was unnecessarily repainted'
+        finally:
+            ui._selection_mode_var.trace_remove('write', trace)
+            controller.on_stats = callback
         import copy
         sample = copy.deepcopy(controller.stats)
         sample.current_combination = '风暴 + 烈焰 + 暗影'
@@ -60,6 +83,7 @@ def run(destination):
         result.update(version=__version__, ui_size=[ui.root.winfo_width(), ui.root.winfo_height()],
                       model_inference='passed', threshold_settings='passed',
                       automatic_mode_controls='passed',
+                      live_mode_refresh='passed',
                       single_page_layout='passed', success=True)
     except Exception:
         result['error'] = traceback.format_exc()

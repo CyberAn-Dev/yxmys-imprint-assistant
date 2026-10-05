@@ -169,16 +169,20 @@ class ImprintDecomposeUI(BaseUI):
         )
         for element in ELEMENT_ORDER:
             self._element_vars[element].set(str(stats.element_counts.get(element, 0)))
-        self._enhancement_enabled_var.set(stats.enhancement_enabled)
-        self._selection_mode_var.set('auto' if stats.auto_mode else 'manual')
-        self._enhancement_rounds_var.set(str(stats.enhancement_target))
+        # Unchanged settings must not repaint controls on every vision frame.
+        for variable, value in (
+                (self._enhancement_enabled_var, stats.enhancement_enabled),
+                (self._selection_mode_var, 'auto' if stats.auto_mode else 'manual'),
+                (self._enhancement_rounds_var, str(stats.enhancement_target)),
+                (self._confirmation_mode_var, 'manual' if stats.confirmation_mode == '手动确认' else 'auto')):
+            if variable.get() != value:
+                variable.set(value)
         if not self._threshold_initialized:
             self._enhancement_threshold_var.set(
                 f'{float(stats.red_attribute_threshold):g}'
             )
             self._threshold_initialized = True
         self._update_threshold_note()
-        self._confirmation_mode_var.set('manual' if stats.confirmation_mode == '手动确认' else 'auto')
 
         combination = stats.current_combination or ''
         if combination != self._displayed_combination:
@@ -350,7 +354,8 @@ class ImprintDecomposeUI(BaseUI):
 
     def _on_selection_mode_changed(self):
         self.controller.set_auto_mode(self._selection_mode_var.get() == 'auto')
-        self._apply_stats(self.controller.stats)
+        # The setter publishes a normalized snapshot to the queue. Never read
+        # the worker's partially updated shared stats directly here.
 
     def _on_enhancement_settings_changed(self, _event=None, *, show_error=True):
         result = super()._on_enhancement_settings_changed(
