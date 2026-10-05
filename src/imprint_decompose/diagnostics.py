@@ -30,12 +30,17 @@ def run(destination):
         assert ui._enhancement_threshold_var.get() == '20'
         assert ui._keep_two_elements_var.get() and controller.stats.keep_two_elements
         assert ui._startup_hidden, 'window must remain unmapped until final layout'
-        ui._keep_two_elements_var.set(False)
-        ui._on_keep_two_elements_changed()
+        assert ui._color_keep_switch.master.master is ui._filter_panel
+        assert ui._error_hint.master is ui._outer, 'log hint must be outside modules'
+        coffee_center = ui._coffee_link.winfo_x() + ui._coffee_link.winfo_width()/2
+        assert abs(coffee_center-ui._footer.winfo_width()/2) <= 1, 'coffee link must be centered'
+        from types import SimpleNamespace
+        ui._color_keep_switch._toggle(SimpleNamespace(x=100))
         assert not controller.stats.keep_two_elements
         assert '元素保留已关闭' in ui._threshold_note_var.get()
-        ui._keep_two_elements_var.set(True)
-        ui._on_keep_two_elements_changed()
+        ui._color_keep_switch._toggle(SimpleNamespace(x=5))
+        ui._color_keep_switch._toggle(SimpleNamespace(x=5))
+        assert ui._keep_two_elements_var.get(), 'clicking ON twice must not switch OFF'
         assert controller.stats.keep_two_elements and not controller.enabled.is_set()
         assert red_attribute_meets_threshold((20,), 20)
         ocr = RedPercentageOCR(feature)
@@ -137,6 +142,7 @@ def run(destination):
                       live_mode_refresh='passed',
                       fixed_status_layout='passed',
                       color_keep_switch='passed',
+                      v4_filter_and_footer_layout='passed',
                       completion_notification='passed',
                       hidden_startup='passed',
                       single_page_layout='passed', success=True)

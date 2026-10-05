@@ -22,7 +22,7 @@ import numpy as np
 
 
 LOGGER = logging.getLogger(__name__)
-_PERCENT_RE = re.compile(r"(\d{1,2}(?:[.,]\d)?)\s*%")
+_PERCENT_RE = re.compile(r"(?<![\d.,-])((?:100|\d{1,2})(?:[.,]\d)?)\s*%")
 _MODEL_NAME = "en_PP-OCRv5_rec_mobile.onnx"
 _DICT_NAME = "ppocrv5_en_dict.txt"
 
@@ -43,6 +43,7 @@ class RedPercentageOCR:
         self._characters: Optional[list[str]] = None
         self._cache: dict[tuple[Any, ...], tuple[float, Optional[tuple[float, str, float]]]] = {}
         self._last_failure_at = 0.0
+        self._last_unreadable_at = 0.0
 
     @property
     def available(self) -> bool:
@@ -80,10 +81,44 @@ class RedPercentageOCR:
         target_height = 48
         target_width = max(1, min(320, round(width * target_height / max(1, height))))
         resized = cv2.resize(image, (target_width, target_height), interpolation=cv2.INTER_CUBIC)
-        canvas = np.full((target_height, 320), 255, dtype=np.uint8)
-        canvas[:, :target_width] = resized
-        normalized = (canvas.astype(np.float32) / 255.0 - 0.5) / 0.5
-        return np.stack((normalized, normalized, normalized), axis=0)[None, ...]
+        # Padding is neutral in NORMALIZED space, not white (+1). White
+        # padding produced high-confidence garbage on short game text rows
+        # and made the same percentage depend on the crop's aspect ratio.
+        normalized = np.zeros((3, target_height, 320), dtype=np.float32)
+        normalized[:, :, :target_width] = resized.astype(np.float32) / 127.5 - 1.0
+        return normalized[None, ...]
+
+    @staticmethod
+    def _percentage(text: str, confidence: float):
+        matches = list(_PERCENT_RE.finditer(text))
+        # Never pick one of several numbers or repair a missing decimal.
+        if len(matches) != 1 or not np.isfinite(confidence) or confidence < .70:
+            return None
+        token = matches[0].group(1).replace(',', '.')
+        value = float(token)
+        if not 0 <= value <= 100:
+            return None
+        return value, f'{token}%', confidence
+
+    def _read_views(self, gray):
+        """Require two agreeing readings; any confident conflict protects."""
+        # Keep antialiased strokes: the detector's binary red mask can turn
+        # an 8 into a 0 at 550x1007 -> 550x1020 normalization. Use continuous
+        # grayscale/contrast/scale views, not a lossy binary OCR input.
+        contrast = cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX)
+        readings, evidence = [], []
+        for variant in (gray, contrast, cv2.resize(gray, (320, 48), interpolation=cv2.INTER_CUBIC)):
+            text, confidence = self._infer_text(variant)
+            evidence.append((text, round(confidence, 3)))
+            candidate = self._percentage(text, confidence)
+            if candidate is None:
+                continue
+            if readings and candidate[0] != readings[0][0]:
+                return None, evidence
+            readings.append(candidate)
+            if len(readings) >= 2:
+                return (candidate[0], candidate[1], min(r[2] for r in readings)), evidence
+        return None, evidence
 
     def _infer_text(self, image: np.ndarray) -> tuple[str, float]:
         if not self._ensure_loaded():
@@ -159,21 +194,11 @@ class RedPercentageOCR:
             return cached[1]
 
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
-        text, confidence = self._infer_text(gray)
-        matches = list(_PERCENT_RE.finditer(text))
-        if not matches:
-            isolated = np.where(mask_crop, 0, 255).astype(np.uint8)
-            text, confidence = self._infer_text(isolated)
-            matches = list(_PERCENT_RE.finditer(text))
-        result: Optional[tuple[float, str, float]] = None
-        if matches:
-            token = matches[-1].group(1).replace(",", ".")
-            try:
-                value = float(token)
-            except ValueError:
-                value = -1.0
-            if 0.0 <= value <= 100.0:
-                result = (value, f"{token}%", confidence)
+        result, evidence = self._read_views(gray)
+        if result is None and now-self._last_unreadable_at >= 5:
+            self._last_unreadable_at = now
+            LOGGER.warning('红字 OCR 未达一致，保持保护: band=%s:%s readings=%s',
+                           band_start, band_end, evidence)
         self._cache[signature] = (now, result)
         if len(self._cache) > 64:
             oldest = min(self._cache, key=lambda key: self._cache[key][0])
@@ -215,8 +240,11 @@ def install_digit_ocr_fallback(detector: Any, feature_cfg: Mapping[str, Any]) ->
                 band_end,
                 self.cfg,
             )
-            if recognized and recognized[2] >= 0.62:
+            if recognized:
                 return recognized
+            # Do not silently fall back to the very low-confidence template
+            # value that caused this second check, especially after conflict.
+            return None, '?', 0.0
         return baseline
 
     detector._digit_ocr_fallback = engine

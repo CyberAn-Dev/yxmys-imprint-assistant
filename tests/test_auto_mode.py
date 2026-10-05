@@ -218,9 +218,8 @@ class AutomaticWorkflowTests(unittest.TestCase):
         for elapsed in (.01, .10, .20, .40, .60):
             self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+elapsed))
             self.assertEqual(rig.run.item.completed, 0)
-        self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+.66))
+        command = rig.run.step(result, rig.frame, None, sent_at+.66)
         self.assertEqual(rig.run.item.completed, 1)
-        command = rig.run.step(result, rig.frame, None, sent_at+.67)
         self.assertEqual(command.kind, 'enhance')
         self.assertTrue(rig.run.allows(command))
 
@@ -230,9 +229,9 @@ class AutomaticWorkflowTests(unittest.TestCase):
         rig.ack(rig.command(observation(State.DETAIL)))
         sent_at = rig.now
         result = observation(State.DETAIL, COLORS[:3])
-        for elapsed in (.01, .10, .20, .25, .35, .60, .66):
+        for elapsed in (.01, .10, .20, .25, .35, .60):
             self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+elapsed))
-        command = rig.run.step(result, rig.frame, None, sent_at+.67)
+        command = rig.run.step(result, rig.frame, None, sent_at+.66)
         self.assertEqual(command.kind, 'dismantle')
 
     def test_new_slot_transient_color_is_not_committed(self):
@@ -245,11 +244,12 @@ class AutomaticWorkflowTests(unittest.TestCase):
             self.assertIsNone(rig.run.step(transient, rig.frame, None, sent_at+elapsed))
             self.assertEqual(rig.run.item.completed, 0)
         result = observation(State.DETAIL, COLORS[:3])
-        for elapsed in (.45, .56, .70, .81):
+        for elapsed in (.45, .56, .70):
             self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+elapsed))
+        command = rig.run.step(result, rig.frame, None, sent_at+.81)
         self.assertEqual(rig.run.item.current, COLORS[:3])
         self.assertEqual(rig.run.item.completed, 1)
-        self.assertEqual(rig.run.step(result, rig.frame, None, sent_at+.82).kind, 'enhance')
+        self.assertEqual(command.kind, 'enhance')
 
     def test_same_classified_color_but_animated_pixels_cannot_confirm_growth(self):
         rig = Rig()
@@ -261,10 +261,35 @@ class AutomaticWorkflowTests(unittest.TestCase):
             rig.frame[341:370, 300:505] = i*15
             self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+.1*(i+1)))
             self.assertEqual(rig.run.item.completed, 0)
-        for elapsed in (1.3, 1.4, 1.6):
+        for elapsed in (1.3, 1.4):
             self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+elapsed))
+        self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+1.59))
+        self.assertEqual(rig.run.step(result, rig.frame, None, sent_at+1.61).kind, 'dismantle')
         self.assertEqual(rig.run.item.completed, 1)
         self.assertEqual(rig.actions.count('enhance'), 1)
+
+    def test_intermediate_red_animation_does_not_delay_settled_slots(self):
+        rig = Rig(2)
+        rig.open()
+        rig.ack(rig.command(observation(State.DETAIL)))
+        sent_at = rig.now
+        for i, elapsed in enumerate((.01, .12, .24, .40, .60)):
+            result = observation(State.DETAIL, COLORS[:3], (8.9,) if i % 2 else (), i % 2)
+            self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+elapsed))
+        command = rig.run.step(observation(State.DETAIL, COLORS[:3], (), 1), rig.frame, None, sent_at+.66)
+        self.assertEqual(command.kind, 'enhance')
+        self.assertEqual(rig.run.item.completed, 1)
+        self.assertFalse(rig.run.item.approved)
+
+    def test_final_red_animation_still_resets_decision_stability(self):
+        rig = Rig(1)
+        rig.open()
+        rig.ack(rig.command(observation(State.DETAIL)))
+        sent_at = rig.now
+        for i in range(12):
+            result = observation(State.DETAIL, COLORS[:3], (8.9,) if i % 2 else (28.9,))
+            self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+.1*(i+1)))
+        self.assertFalse(rig.run.item.approved)
 
     def test_settled_record_change_still_fails_and_keeps_diagnostic_record(self):
         rig = Rig()

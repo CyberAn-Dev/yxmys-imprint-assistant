@@ -54,36 +54,40 @@ class ConfirmationSwitch(tk.Canvas):
 
 
 class EnhancementSwitch(tk.Canvas):
-    """High-contrast on/off control for automatic enhancement."""
+    """Shared on/off control for enhancement and element retention."""
 
-    def __init__(self, parent, variable, command):
-        super().__init__(parent, width=150, height=44, bg=parent.cget('bg'),
+    def __init__(self, parent, variable, command, *, width=150, height=36):
+        super().__init__(parent, width=width, height=height, bg=parent.cget('bg'),
                          highlightthickness=0, bd=0, cursor='hand2')
+        self._control_width, self._control_height = width, height
         self.variable = variable
         self.command = command
         self.bind('<Button-1>', self._toggle)
         self.variable.trace_add('write', lambda *_: self._draw())
         self._draw()
 
-    def _toggle(self, _event):
-        self.variable.set(not self.variable.get())
-        self.command()
+    def _toggle(self, event):
+        enabled = event.x < self._control_width/2
+        if enabled != bool(self.variable.get()):
+            self.variable.set(enabled)
+            self.command()
 
     def _draw(self):
         self.delete('all')
         enabled = bool(self.variable.get())
         active = '#007aff' if enabled else '#8e8e93'
+        w, h = self._control_width, self._control_height
         ConfirmationSwitch._round_rect(
-            self, 1, 1, 149, 43, 11, fill='#f2f2f7', outline='#d8d8dc'
+            self, 1, 1, w-1, h-1, 9, fill='#f2f2f7', outline='#d8d8dc'
         )
-        x0, x1 = ((3, 75) if enabled else (75, 147))
+        x0, x1 = ((3, w/2) if enabled else (w/2, w-3))
         ConfirmationSwitch._round_rect(
-            self, x0, 3, x1, 41, 9, fill=active, outline=active
+            self, x0, 3, x1, h-3, 7, fill=active, outline=active
         )
-        self.create_text(39, 22, text='开', fill='white' if enabled else '#6e6e73',
-                         font=('Microsoft YaHei UI', 12, 'bold' if enabled else 'normal'))
-        self.create_text(111, 22, text='关', fill='white' if not enabled else '#6e6e73',
-                         font=('Microsoft YaHei UI', 12, 'bold' if not enabled else 'normal'))
+        self.create_text(w/4+1, h/2, text='开', fill='white' if enabled else '#6e6e73',
+                         font=('Microsoft YaHei UI', 10, 'bold' if enabled else 'normal'))
+        self.create_text(w*3/4-1, h/2, text='关', fill='white' if not enabled else '#6e6e73',
+                         font=('Microsoft YaHei UI', 10, 'bold' if not enabled else 'normal'))
 
 
 class ImprintDecomposeUI(BaseUI):
@@ -400,7 +404,7 @@ class ImprintDecomposeUI(BaseUI):
         if not hasattr(self, '_threshold_note_var'):
             return
         value = self._enhancement_threshold_var.get().strip() or '20'
-        suffix = '读不清时保护' if self._keep_two_elements_var.get() else '元素保留已关闭'
+        suffix = '无红字时按元素保留' if self._keep_two_elements_var.get() else '元素保留已关闭'
         self._threshold_note_var.set(
             f'红字 ≥{value}% 保留 · {suffix}'
         )
@@ -494,19 +498,19 @@ class ImprintDecomposeUI(BaseUI):
         # Pack the footer first so it always reserves space at the bottom.
         footer = self._footer = tk.Frame(outer, bg=self.BG)
         footer.pack(side='bottom', fill='x', pady=(3, 0))
-        coffee = self._label(
+        for column in range(3):
+            footer.columnconfigure(column, weight=1, uniform='footer')
+        coffee = self._coffee_link = self._label(
             footer, '☕ 请我喝一杯咖啡',
             fg='#007aff', bg=self.BG, size=9, cursor='hand2',
         )
         coffee.configure(font=('Microsoft YaHei UI', 9, 'underline'))
-        coffee.pack(side='left')
+        coffee.grid(row=0, column=1)
         coffee.bind('<Button-1>', self._show_coffee_qr)
-        footer_meta = tk.Frame(footer, bg=self.BG)
-        footer_meta.pack(side='right', fill='x', expand=True, padx=(18, 0))
-        self._label(footer_meta, '仅供开发交流 · 非盈利 · 开源非商业使用', fg=self.MUTED,
-                    bg=self.BG, size=9).pack(side='left')
-        self._label(footer_meta, f'作者：{__author__}   ·   v{__version__}', fg=self.MUTED,
-                    bg=self.BG, size=9).pack(side='right')
+        self._label(footer, '仅供开发交流 · 非商业使用', fg=self.MUTED,
+                    bg=self.BG, size=9).grid(row=0, column=0, sticky='w')
+        self._label(footer, f'作者：{__author__}   ·   v{__version__}', fg=self.MUTED,
+                    bg=self.BG, size=9).grid(row=0, column=2, sticky='e')
 
         head = tk.Frame(outer, bg=self.BG)
         head.pack(fill='x', pady=(0, 4))
@@ -571,42 +575,43 @@ class ImprintDecomposeUI(BaseUI):
                       self._on_selection_mode_changed).pack(side='left')
         self._label(selection, '自动仅处理初始 2 属性 · 原有 3/4/5 跳过',
                     fg=self.MUTED, size=9).pack(side='right')
-        line = tk.Frame(settings, bg=self.CARD)
-        line.pack(fill='x')
-        self._label(line, '分解确认', bold=True).pack(side='left', padx=(0, 10))
-        ConfirmationSwitch(line, self._confirmation_mode_var,
-                           self._on_confirmation_mode_changed).pack(side='left')
-        EnhancementSwitch(line, self._enhancement_enabled_var,
-                          self._on_enhancement_settings_changed).pack(side='right')
-        self._label(line, '自动强化', bold=True).pack(side='right', padx=(12, 10))
-        options = tk.Frame(settings, bg=self.CARD)
-        options.pack(fill='x', pady=(7, 0))
-        self._segment(options, self._enhancement_rounds_var,
+        controls = tk.Frame(settings, bg=self.CARD)
+        controls.pack(fill='x')
+        actions = tk.Frame(controls, bg=self.CARD)
+        actions.pack(side='left', anchor='n', padx=(0, 14))
+        self._label(actions, '分解确认', bold=True).grid(row=0, column=0, sticky='w', padx=(0, 8))
+        ConfirmationSwitch(actions, self._confirmation_mode_var,
+                           self._on_confirmation_mode_changed).grid(row=0, column=1, sticky='w')
+        self._label(actions, '自动强化', bold=True).grid(row=1, column=0, sticky='w', pady=5)
+        EnhancementSwitch(actions, self._enhancement_enabled_var,
+                          self._on_enhancement_settings_changed, width=158).grid(row=1, column=1, sticky='w', pady=5)
+        self._label(actions, '强化次数', fg=self.MUTED, size=9).grid(row=2, column=0, sticky='w')
+        self._segment(actions, self._enhancement_rounds_var,
                       [('1 次', '1'), ('2 次', '2'), ('3 次', '3')],
-                      self._on_enhancement_settings_changed).pack(side='left')
-        threshold_box = tk.Frame(options, bg=self.CARD)
-        threshold_box.pack(side='right')
-        self._label(threshold_box, '红色词条', fg=self.MUTED).pack(side='left', padx=(0, 7))
+                      self._on_enhancement_settings_changed).grid(row=2, column=1, sticky='w')
+        filters = self._filter_panel = tk.Frame(controls, bg=self.CARD, padx=8, pady=4,
+                                                highlightbackground='#dedee3', highlightthickness=1)
+        filters.pack(side='right', fill='both', expand=True)
+        threshold_box = tk.Frame(filters, bg=self.CARD)
+        threshold_box.pack(fill='x')
+        self._label(threshold_box, '红色词条', fg=self.MUTED, size=9).pack(side='left', padx=(0, 5))
         self._segment(
             threshold_box, self._enhancement_threshold_var,
             [('≥10%', '10'), ('≥15%', '15'), ('≥20%', '20'), ('≥27%', '27')],
             self._on_enhancement_settings_changed,
-        ).pack(side='left')
-        color_rule = tk.Frame(settings, bg=self.CARD)
-        color_rule.pack(fill='x', pady=(4, 0))
+        ).pack(side='right')
+        color_rule = tk.Frame(filters, bg=self.CARD)
+        color_rule.pack(fill='x', pady=(4, 2))
         self._keep_two_elements_var = tk.BooleanVar(value=self.controller.stats.keep_two_elements)
-        tk.Checkbutton(
-            color_rule, text='保留未出现第三种元素的刻印（无红字时）',
-            variable=self._keep_two_elements_var, command=self._on_keep_two_elements_changed,
-            bg=self.CARD, activebackground=self.CARD, fg=self.TEXT,
-            selectcolor=self.CARD, bd=0, highlightthickness=0, cursor='hand2',
-            font=('Microsoft YaHei UI', 9),
-        ).pack(side='left')
+        self._label(color_rule, '保留未出现第三种元素', size=9).pack(side='left', padx=(0, 7))
+        self._color_keep_switch = EnhancementSwitch(
+            color_rule, self._keep_two_elements_var, self._on_keep_two_elements_changed, width=110)
+        self._color_keep_switch.pack(side='right')
         self._threshold_note_var = tk.StringVar()
         self._enhancement_threshold_var.trace_add('write', self._update_threshold_note)
         self._update_threshold_note()
-        self._label(color_rule, '', textvariable=self._threshold_note_var,
-                    fg=self.MUTED, size=9).pack(side='right')
+        self._label(filters, '', textvariable=self._threshold_note_var,
+                    fg=self.MUTED, size=9).pack(anchor='w')
 
         metrics = self._panel(outer, '')
         for i, (title, key) in enumerate((
@@ -686,5 +691,7 @@ class ImprintDecomposeUI(BaseUI):
         self._status_label = action
         self._status_font = Font(root=self.root, font=action.cget('font'))
         action.pack(fill='x', pady=(3, 0))
-        self._label(state, '遇到错误？请将 EXE 同目录的 logs 和 debug 文件夹提交给开发者排查。',
-                    fg=self.MUTED, size=9).pack(anchor='w', pady=(3, 0))
+        self._error_hint = self._label(
+            outer, '遇到错误？请提交 EXE 同目录的 logs 和 debug 文件夹；读不清时会暂停保护。',
+            bg=self.BG, fg=self.MUTED, size=9)
+        self._error_hint.pack(anchor='w', pady=(0, 2))

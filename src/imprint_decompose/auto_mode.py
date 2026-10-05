@@ -312,7 +312,12 @@ class AutoRun:
             return None
         slot_y = getattr(analysis.detail, 'right_slot_y', 0) or 355
         slot_image = frame[max(0, slot_y-14):slot_y+15, 300:505]
-        key = (elements, slot_y, tuple(analysis.red_attribute_values), analysis.red_attribute_unreadable_count)
+        # Intermediate red text is still animating and is not used to decide
+        # the next enhancement. It must not reset otherwise stable slots.
+        final_slots = self.item and len(elements) == 2+self.settings.rounds
+        key = (elements, slot_y,
+               tuple(analysis.red_attribute_values) if final_slots else (),
+               analysis.red_attribute_unreadable_count if final_slots else 0)
         # Observe each slot increase once, then reuse that observation for
         # the next enhancement. Final red-value decisions keep their longer
         # stabilization time and destructive actions still recapture.
@@ -342,7 +347,8 @@ class AutoRun:
             self.identity_reference = s.identity.copy()
             self.identity_difference = 0.
             self._transition(Phase.DETAIL, now, retain_stability=True)
-            return None
+            # Continue on this verified frame, with a fresh capture in the
+            # dispatcher. No extra empty worker tick between ready actions.
         self._validate_identity(frame)
         if self.phase == Phase.ENHANCE:
             if elements == s.current:
@@ -354,7 +360,10 @@ class AutoRun:
             s.completed += 1
             self._transition(Phase.DETAIL, now, retain_stability=True)
             self.message = f'已确认强化成功 {s.completed}/{self.settings.rounds} 次：{" + ".join(elements)}'
-            return None
+            # Keep the final decision's longer stability gate. Intermediate
+            # steps can proceed immediately after the same .65/.35 guards.
+            if s.completed >= self.settings.rounds and now-self.stable_since < self.RESULT_SECONDS:
+                return None
         if elements != s.current:
             self._fail(f'当前属性与本轮记录不一致，禁止继续操作；'
                        f'预期={" + ".join(s.current)}；实际={" + ".join(elements)}')

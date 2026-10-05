@@ -276,7 +276,13 @@ def read_inventory(frame, roi):
         pitch = float(np.median([c.pitch for c in cards]))
         first_top = min(c.slot_y for c in cards) - pitch*5
         blank_from = round(max(c.slot_y for c in cards) + pitch)
-        if (0 <= first_top-y0 <= pitch*2.5 and y1-blank_from >= pitch*5
+        # Normalized live windows include up to 24 px of fixed toolbar at
+        # the ROI top. Two complete rows may leave only ~56 px of parchment,
+        # which still covers the start/artwork of any following row. This
+        # is only a visual hint: AutoRun also verifies both wheel directions.
+        header_guard = 24 if y1-y0 >= 180 else 0
+        if (not clipped_bottom and 0 <= first_top-y0 <= pitch*2.5+header_guard
+                and y1-blank_from >= pitch*3.5
                 and _parchment_empty(hsv[blank_from:y1, x0:x1])):
             short_page = True
     return ListScan(tuple(cards), (x0, y0, x1, y1), uncertain, short_page,

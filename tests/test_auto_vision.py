@@ -190,6 +190,23 @@ class InventoryVisionTests(unittest.TestCase):
         self.assertFalse(blank_inventory(frame, roi))
         self.assertGreater(list_chrome(frame, roi).size, 0)
 
+    def test_two_row_short_inventory_with_fixed_toolbar_and_bottom_nav(self):
+        source = cv2.imread(str(FIXTURES / 'inventory_two.png'))
+        frame = np.full((1020, 550, 3), (110, 127, 141), np.uint8)
+        for top in (727, 818):
+            frame[top:top+80, :477] = source[135:215]
+        frame[949:] = (55, 55, 55)
+        roi = inventory_viewport(frame, (20, 680, 530, 970))
+        scan = read_inventory(frame, roi)
+        self.assertEqual(len(scan.cards), 10)
+        self.assertFalse(scan.uncertain, scan.issues)
+        self.assertTrue(all(c.complete for c in scan.cards))
+        self.assertTrue(scan.short_page)
+        # Any following artwork / coloured fragment blocks the empty-band
+        # evidence. Stationary input alone must never complete the list.
+        frame[922:940, 200:230] = (20, 20, 200)
+        self.assertFalse(read_inventory(frame, roi).short_page)
+
     def test_click_centres_land_inside_artwork_not_slot_strip(self):
         for name, roi in (('inventory_mixed.png', (20, 107, 488, 348)),
                           ('inventory_two.png', (20, 60, 475, 298))):

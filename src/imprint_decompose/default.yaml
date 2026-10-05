@@ -2,7 +2,8 @@ actions:
   # Faster enhancement clicks; slot/result stability checks remain enabled.
   cooldown: 0.06
   enhancement_pause: 0.06
-  capture_interval: 0.06
+  # More responsive observation; elapsed-time animation guards are unchanged.
+  capture_interval: 0.045
   dismantle_point: [337, 870]
 
 vision:
