@@ -105,6 +105,8 @@ python -m pip install -r requirements-build.lock
 
 构建结果位于 `release/yxmys-imprint-assistant-v版本号.exe`，是可以单独发布的单文件 EXE，不再依赖旁边的 `_internal` 文件夹。构建使用固定的 `build/work` 和 `build/stage`，先运行回归测试，再检查 EXE 界面、阈值设置和 OCR 模型加载；全部通过才发布。`release-info.json` 记录版本、源码提交、SHA256 和自检结果。
 
+Windows 本机和 GitHub 托管环境的可选系统字体数量可能不同。字模回归逐张核验仓库内 0～9 的原生字模、加载顺序及识别结果，不依赖本机字体总数；另覆盖没有系统字体的环境。CI 使用 UTF-8 输出，并在失败时上传已有的测试日志、打包警告和 EXE 自检报告（保留 7 天），测试及 EXE 自检失败仍会阻止发布。
+
 ## v3.4.3 初始化、滚动与列表识别修复
 
 - 按旧版识别优先级先判定页面，仅详情页读取红色词条及加载 OCR。列表页不再对已装备刻印的图案执行无用 OCR；详情红字阈值和读不清时保护不变。
