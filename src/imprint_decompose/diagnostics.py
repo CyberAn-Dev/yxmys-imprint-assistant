@@ -9,6 +9,23 @@ def run(destination):
     controller = ui = None
     try:
         import numpy as np
+        import io
+        import sys
+        from PIL import Image
+        # Validate the formats used by screenshots, icons and the coffee QR
+        # in the actual frozen package, after optional codecs are excluded.
+        for image_format in ('PNG', 'JPEG', 'BMP', 'ICO'):
+            buffer = io.BytesIO()
+            Image.new('RGB', (32, 32), (30, 120, 200)).save(buffer, format=image_format)
+            buffer.seek(0)
+            with Image.open(buffer) as decoded:
+                decoded.load()
+                assert decoded.size == (32, 32), image_format
+        asset_root = Path(sys._MEIPASS) if getattr(sys, 'frozen', False) else Path(__file__).resolve().parents[2]
+        for asset in ('app_icon.ico', 'wechat_pay.jpg'):
+            with Image.open(asset_root / 'assets' / asset) as decoded:
+                decoded.load()
+                assert decoded.width and decoded.height
         from . import __version__
         from .config import load_feature_config
         from .controller_v2 import ImprintDecomposeController, red_attribute_meets_threshold
@@ -180,6 +197,7 @@ def run(destination):
         assert ui.root.winfo_height() <= ui.root.winfo_screenheight() - 60, 'window exceeds screen'
         result.update(version=__version__, ui_size=[ui.root.winfo_width(), ui.root.winfo_height()],
                       model_inference='passed', threshold_settings='passed',
+                      required_image_formats='passed',
                       automatic_mode_controls='passed',
                       startup_defaults='passed',
                       live_mode_refresh='passed',

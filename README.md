@@ -1,6 +1,12 @@
 # yxmys-刻印快速筛选分解小助手
 
-当前维护版本：**v4.0.5**。正式 EXE 和 `release-info.json` 位于本项目 `release/`。
+当前维护版本：**v4.0.6**。正式 EXE 和 `release-info.json` 位于本项目 `release/`。
+
+### V4.0.6 依赖瘦身与正式发布
+
+- 打包排除未使用的 AVIF、WebP 图片编解码插件，保留 PNG/JPEG/BMP/ICO、界面、截图、OCR 和全部自动处理逻辑。
+- 不更换语言、不移除 OpenCV、NumPy 或 OCR 模型；本轮仅裁剪可独立排除的图片格式依赖。
+- 推送 main 是构建验证；正式发布使用与源码版本一致的 v* 标签，Release 同时包含 EXE 和带 SHA256、自检结果的 release-info.json。
 
 ### V4.0.5 排版调整
 

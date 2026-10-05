@@ -60,6 +60,8 @@ foreach ($dllName in @('tcl86t.dll', 'tk86t.dll')) {
     --name $name --icon $icon --paths $source --distpath $stage `
     --workpath $work --specpath $work `
     --additional-hooks-dir $hooks `
+    --exclude-module PIL.AvifImagePlugin --exclude-module PIL._avif `
+    --exclude-module PIL.WebPImagePlugin --exclude-module PIL._webp `
     --add-data "$(Join-Path $project 'config\default.yaml');config" `
     --add-data "$(Join-Path $source 'imprint_decompose\default.yaml');imprint_decompose" `
     --add-data "$(Join-Path $source 'imprint_decompose\game_digit_templates.npz');imprint_decompose" `

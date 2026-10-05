@@ -55,10 +55,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = '${{ github.ref_name }}'
-          $asset = Get-ChildItem release/*.exe | Select-Object -First 1
+          $manifest = Get-Content release/release-info.json -Raw | ConvertFrom-Json
+          if ($tag -ne "v$($manifest.version)" -or -not $manifest.selfTest.success) {
+            throw 'Release tag/version mismatch or failed self-test.'
+          }
+          $asset = Get-Item "release/yxmys-imprint-assistant-$tag.exe"
+          if ((Get-FileHash $asset.FullName -Algorithm SHA256).Hash -ne $manifest.sha256) {
+            throw 'Release EXE hash mismatch.'
+          }
           gh release view $tag 2>$null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag $asset.FullName --clobber
+            gh release upload $tag $asset.FullName release/release-info.json --clobber
           } else {
-            gh release create $tag $asset.FullName --generate-notes --title $tag
+            gh release create $tag $asset.FullName release/release-info.json --verify-tag --generate-notes --title $tag
           }
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub Release publication failed.' }
