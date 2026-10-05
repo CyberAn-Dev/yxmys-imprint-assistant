@@ -1,4 +1,5 @@
 build/
+local-notes/
 .venv/
 dist/
 logs/
