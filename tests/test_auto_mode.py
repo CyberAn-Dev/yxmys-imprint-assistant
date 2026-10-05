@@ -79,6 +79,81 @@ class Rig:
 
 
 class AutomaticWorkflowTests(unittest.TestCase):
+    def test_verified_return_plans_next_selection_without_second_stability_wait(self):
+        rig = Rig()
+        result = rig.enhance(result=(COLORS[0], COLORS[1], COLORS[1]))
+        rig.ack(rig.command(observation(State.DETAIL, result)))
+        at = rig.now
+        scan = inventory(5, 2)
+        self.assertIsNone(rig.run.step(observation(), rig.frame, scan, at+.01))
+        self.assertIsNone(rig.run.step(observation(), rig.frame, scan, at+.11))
+        command = rig.run.step(observation(), rig.frame, scan, at+.22)
+        self.assertEqual(command.kind, 'select')
+        self.assertEqual(command.point, (181, 724))  # newly read second column
+        self.assertEqual(rig.run.processed, 1)
+        self.assertTrue(rig.run.allows(command))
+
+    def test_unreadable_return_interrupts_stability_before_next_selection(self):
+        rig = Rig()
+        result = rig.enhance(result=(COLORS[0], COLORS[1], COLORS[1]))
+        rig.ack(rig.command(observation(State.DETAIL, result)))
+        at = rig.now
+        scan = inventory(5, 2)
+        for elapsed in (.01, .11):
+            self.assertIsNone(rig.run.step(observation(), rig.frame, scan, at+elapsed))
+        self.assertIsNone(rig.run.step(observation(), rig.frame, replace(scan, uncertain=True), at+.3))
+        for elapsed in (.31, .41):
+            self.assertIsNone(rig.run.step(observation(), rig.frame, scan, at+elapsed))
+        self.assertEqual(rig.run.step(observation(), rig.frame, scan, at+.52).kind, 'select')
+
+    def test_confirmation_not_ready_interrupts_stability(self):
+        rig = Rig()
+        result = rig.enhance()
+        rig.ack(rig.command(observation(State.DETAIL, result)))
+        at = rig.now
+        confirm = observation(State.CONFIRM)
+        for elapsed in (.01, .11):
+            self.assertIsNone(rig.run.step(confirm, rig.frame, None, at+elapsed))
+        confirm.confirm_ready = False
+        self.assertIsNone(rig.run.step(confirm, rig.frame, None, at+.3))
+        confirm.confirm_ready = True
+        for elapsed in (.31, .41):
+            self.assertIsNone(rig.run.step(confirm, rig.frame, None, at+elapsed))
+        self.assertEqual(rig.run.step(confirm, rig.frame, None, at+.5).kind, 'confirm')
+
+    def test_fast_confirmation_requires_three_stable_pixel_observations(self):
+        rig = Rig()
+        result = rig.enhance()
+        rig.ack(rig.command(observation(State.DETAIL, result)))
+        at = rig.now
+        confirm = observation(State.CONFIRM)
+        for i in range(6):
+            rig.frame[370:710, 30:520] = i*15
+            self.assertIsNone(rig.run.step(confirm, rig.frame, None, at+.1*(i+1)))
+        self.assertIsNone(rig.run.step(confirm, rig.frame, None, at+.7))
+        command = rig.run.step(confirm, rig.frame, None, at+.81)
+        self.assertEqual(command.kind, 'confirm')
+        rig.now = at+.81
+        rig.ack(command)
+        self.assertIsNone(rig.run.step(confirm, rig.frame, None, at+1.2))
+
+    def test_fast_reward_close_requires_settled_pixels_and_does_not_repeat(self):
+        rig = Rig()
+        result = rig.enhance()
+        rig.ack(rig.command(observation(State.DETAIL, result)))
+        rig.ack(rig.command(observation(State.CONFIRM)))
+        at = rig.now
+        reward = observation(State.REWARD)
+        for i in range(6):
+            rig.frame[440:610, :550] = i*15
+            self.assertIsNone(rig.run.step(reward, rig.frame, None, at+.1*(i+1)))
+        self.assertIsNone(rig.run.step(reward, rig.frame, None, at+.67))
+        command = rig.run.step(reward, rig.frame, None, at+.74)
+        self.assertEqual(command.kind, 'reward')
+        rig.now = at+.74
+        rig.ack(command)
+        self.assertIsNone(rig.run.step(reward, rig.frame, None, at+1.0))
+
     def test_exact_one_two_three_observed_enhancements_then_decompose(self):
         for target in (1, 2, 3):
             with self.subTest(target=target):

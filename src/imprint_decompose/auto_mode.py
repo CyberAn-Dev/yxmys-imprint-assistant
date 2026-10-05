@@ -99,6 +99,8 @@ class AutoRun:
     # with a minimum age after the acknowledged click (never a blind retry).
     SLOT_STABLE_SECONDS = .35
     ENHANCE_MIN_SECONDS = .65
+    CONFIRM_STABLE_SECONDS = .18
+    REWARD_STABLE_SECONDS = .12
     SCROLL_SETTLE = .30
     # Modestly faster than downward scanning, with observation after every
     # step. Never fire a blind whole-inventory jump at startup or on rescan.
@@ -550,7 +552,7 @@ class AutoRun:
                 self.next_scroll_kind = 'travel'
         self._transition(Phase.LIST, now, retain_stability=True)
 
-    def _returned(self, now):
+    def _returned(self, now, scan):
         s = self.item
         if s.outcome == 'keep':
             self.kept += 1
@@ -569,7 +571,13 @@ class AutoRun:
         self.boundary_image = None
         self.next_scroll_kind = 'travel'
         self.message = '已返回列表，重新识别补位后的所有坐标'
-        self._transition(Phase.LIST, now)
+        # The return gate already verified current list pixels AND slots.
+        # Rebase those observations, not any pre-deletion card coordinates.
+        self._transition(Phase.LIST, now, retain_stability=True)
+        self.stable_key = ('inventory', scan.roi)
+        self.readable_key = scan.stability_key
+        self.readable_frames = self.stable_frames
+        self.readable_since = self.stable_since
 
     def step(self, analysis, frame, scan, now):
         if not self.valid or self.phase in (Phase.DONE, Phase.INVALID):
@@ -661,7 +669,8 @@ class AutoRun:
             self._fail('缺少本轮处理记录，禁止处理确认弹窗')
         if self.phase == Phase.CONFIRM:
             if state == ImprintState.CONFIRM and analysis.confirm_ready:
-                if not self._stable(('confirm',), now, result=True):
+                if not self._stable(('confirm',), now, frame[370:710, 30:520],
+                                    delay=self.CONFIRM_STABLE_SECONDS):
                     return None
                 s.confirm_seen = True
                 if self.settings.confirmation == 'manual':
@@ -676,12 +685,15 @@ class AutoRun:
                 return None
             if state == ImprintState.LIST:
                 self._fail('未观察到关联分解确认/奖励，无法确认结果；已暂停')
+            self.stable_key = None
             return None
         if self.phase in (Phase.RETURN, Phase.REWARD):
             if state == ImprintState.CONFIRM:
+                self.stable_key = None
                 return None  # Never send a second confirmation.
             if state == ImprintState.REWARD and s.outcome == 'decompose' and analysis.reward_ready:
-                if self.phase == Phase.RETURN and self._stable(('reward',), now):
+                if self.phase == Phase.RETURN and self._stable(
+                        ('reward',), now, frame[440:610, :550], delay=self.REWARD_STABLE_SECONDS):
                     s.reward_seen = True
                     return self._intent('reward', reason='关闭本轮分解奖励，返回列表')
                 return None
@@ -690,14 +702,20 @@ class AutoRun:
                     self._fail('分解完成证据不足，未计入成功数量')
                 empty = bool(scan and scan.empty and self.expects_empty())
                 if scan is None or scan.uncertain or (not scan.cards and not empty):
+                    self.stable_key = None
                     return None
-                if self._stable(('returned', scan.stability_key), now, list_image(frame, scan.roi)):
+                if self._stable(('returned', scan.stability_key), now, list_image(frame, scan.roi),
+                                delay=self.LIST_STABLE_SECONDS):
                     if s.outcome == 'decompose' and not s.reward_seen and now-self.phase_at < 2.5:
                         return None
-                    self._returned(now)
+                    self._returned(now, scan)
                     if empty:
                         self._transition(Phase.DONE, now)
                         self.message = '已确认单页库存最后一枚分解完成，列表为空'
+                    else:
+                        # Same-frame planning, fresh pre-click capture in the
+                        # adapter. No second three-frame wait after return.
+                        return self.step(analysis, frame, scan, now)
                 return None
             self.stable_key = None
         return None

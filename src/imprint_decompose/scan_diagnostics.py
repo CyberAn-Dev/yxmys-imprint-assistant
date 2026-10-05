@@ -1,5 +1,6 @@
 """Bounded, replayable evidence: raw pixels are separate from overlays."""
 from dataclasses import asdict
+from datetime import datetime, timezone
 import json
 
 import cv2
@@ -7,11 +8,14 @@ import cv2
 from .auto_vision import list_image
 
 
-def save_scan_failure(frame, scan, run, timings):
+def save_scan_failure(frame, scan, run, timings, *, category='failure'):
+    if category not in ('failure', 'stall'):
+        raise ValueError('unknown diagnostic category')
     from tower_bot.config import debug_dir
+    from . import __version__
     folder = debug_dir()
     folder.mkdir(parents=True, exist_ok=True)
-    prefix = 'imprint_auto_failure_'
+    prefix = f'imprint_auto_{category}_'
     images = {'raw': frame}
     if run.identity_reference is not None:
         images['identity_before'] = run.identity_reference
@@ -31,6 +35,8 @@ def save_scan_failure(frame, scan, run, timings):
     # Metadata identifies the files belonging to THIS failure. Older before
     # images may remain, but are never named here if no scroll was attempted.
     report = {
+        'category': category,
+        'version': __version__, 'captured_at': datetime.now(timezone.utc).isoformat(),
         'phase': getattr(run, 'failed_phase', run.phase).name,
         'message': run.message, 'scrolls': run.scrolls, 'pass': run.pass_number,
         'seeking_top': run.seeking_top, 'scroll_kind': run.scroll_kind,

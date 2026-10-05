@@ -173,16 +173,15 @@ def install_detail_slot_alignment(detector, feature_cfg):
         token = id(hsv)
         pending = state['pending']
         if pending is None or pending['token'] != token:
-            now = time.monotonic()
             detail_hint = likely_detail(hsv)
             if not detail_hint:
                 # The current screen is normally the list.  Keep the last
                 # offset without rescanning dozens of rows on every frame.
                 selected = read_candidate(hsv, state['offset'] or 0)
-            elif (
-                state['offset'] is not None
-                and now - state['calibrated_at'] < 4.0
-            ):
+            elif state['offset'] is not None:
+                # Validate the current geometry on EVERY frame. A valid
+                # offset does not expire on a timer: the old four-second
+                # full search caused recurring ~250 ms stalls mid-enhance.
                 selected = read_candidate(hsv, state['offset'])
                 if not candidate_is_detail(selected):
                     selected = search_alignment(hsv)

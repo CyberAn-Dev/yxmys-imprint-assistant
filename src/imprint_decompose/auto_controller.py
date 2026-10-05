@@ -25,6 +25,7 @@ class AutoControllerMixin:
         self._scan_reported_decomposed = 0
         self._scan_trace_key = None
         self._scan_trace_at = 0.
+        self._scan_stall_evidence = None
         super().__init__(*args, **kwargs)
         original_guard = self.input._guard_dispatch
 
@@ -148,6 +149,7 @@ class AutoControllerMixin:
                 self._scan_window = None
                 self._scan_chrome = None
                 self._scan_roi = None
+                self._scan_stall_evidence = None
                 self._scan_base_counts = (self.stats.total_kept, self.stats.red_threshold_matches,
                                           self.stats.enhancement_clicks)
                 self._scan_reported_decomposed = 0
@@ -293,6 +295,20 @@ class AutoControllerMixin:
                 # timestamped files, which must not accumulate every frame.
                 self._save_debug(frame.copy(), analysis, tag='latest')
             intent = run.step(analysis, frame, scan, time.monotonic())
+            # A user may stop before the eight-second safety timeout. Keep
+            # bounded raw evidence once per persistent unreadable list, so
+            # that an old failure screenshot is not mistaken for this stall.
+            if (scan is not None and scan.uncertain and run.valid
+                    and run.phase == Phase.LIST and run.stable_frames >= 3
+                    and time.monotonic()-run.phase_at >= 1.5):
+                key = (id(run), run.scrolls, scan.issues)
+                if key != self._scan_stall_evidence:
+                    self._scan_stall_evidence = key
+                    try:
+                        save_scan_failure(frame, scan, run, timings, category='stall')
+                        logger.info('AUTO_STALL 已保存当前等待识别的原始截图: %s', scan.issues)
+                    except Exception as debug_exc:
+                        logger.warning('保存等待识别证据失败: %s', debug_exc)
             self._trace_scan(run, scan, timings, intent)
             self._sync_scan_stats(run)
             if run.phase == Phase.DONE:

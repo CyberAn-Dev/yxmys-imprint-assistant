@@ -102,8 +102,15 @@ def inventory_viewport(frame, roi):
     dark = (s < 100) & (v < 85)
     parchment = (s >= 20) & (s < 90) & (v >= 90) & (v <= 220)
     for y in range(max(y0+180, y1-65), min(y1, len(hsv)-15)):
+        # A full bottom row can cover most of the parchment ABOVE the nav.
+        # Its fixed side gutters are not covered by card art/slots. Requiring
+        # >55% parchment across the whole width made the viewport depend on
+        # the inventory contents, and exposed hidden slots behind the nav.
+        above = parchment[y-15:y-3]
+        gutters = np.concatenate((above[:, :12], above[:, -12:]), axis=1)
+        parchment_above = above.mean() >= .55 or gutters.mean() >= .75
         if (dark[y].mean() >= .85 and dark[y+3:y+15].mean() >= .75
-                and parchment[y-15:y-3].mean() >= .55):
+                and parchment_above):
             return (x0, y0, x1, y)
     return (x0, y0, x1, y1)
 

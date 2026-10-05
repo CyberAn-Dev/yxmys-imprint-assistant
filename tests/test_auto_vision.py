@@ -55,6 +55,32 @@ class InventoryVisionTests(unittest.TestCase):
         frame[:] = 0  # an entirely unknown black screen is not a nav edge
         self.assertEqual(inventory_viewport(frame, roi), roi)
 
+    def test_bottom_nav_detection_does_not_depend_on_last_row_parchment_coverage(self):
+        frame = np.full((1020, 550, 3), (110, 127, 141), np.uint8)
+        roi = (20, 680, 530, 970)
+        frame[948:] = (55, 55, 55)
+        # Fully populated last-row artwork can mask >55% of the parchment
+        # above the separator while the side gutters remain unobstructed.
+        frame[929:948, 34:516] = (25, 30, 200)
+        self.assertEqual(inventory_viewport(frame, roi), (20, 680, 530, 948))
+        frame[948:, 100:450] = (30, 35, 160)
+        self.assertEqual(inventory_viewport(frame, roi), roi)  # not a broad dark nav
+
+    def test_nav_hidden_slots_are_not_middle_card_recognition_failures(self):
+        source = cv2.imread(str(FIXTURES / 'inventory_five.png'))[125:357, 20:488]
+        roi = (20, 680, 530, 970)
+        for offset in (15, 20, 25):
+            frame = np.full((1020, 550, 3), (110, 127, 141), np.uint8)
+            frame[680+offset:680+offset+len(source), 20:488] = source
+            frame[948:] = (55, 55, 55)
+            # Lower parchment fraction, preserving both real card pixels
+            # and the fixed side gutters used for the nav boundary.
+            frame[933:948, 488:516] = (25, 30, 200)
+            visible = inventory_viewport(frame, roi)
+            self.assertEqual(visible, (20, 680, 530, 948))
+            scan = read_inventory(frame, visible)
+            self.assertFalse(scan.uncertain, scan.issues)
+            self.assertTrue(scan.clipped_bottom)
     def test_hidden_bottom_slots_are_partial_cards_not_recognition_errors(self):
         source = cv2.imread(str(FIXTURES / 'inventory_five.png'))[125:357, 20:488]
         roi = (20, 680, 530, 970)

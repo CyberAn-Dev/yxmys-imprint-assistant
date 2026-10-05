@@ -66,6 +66,37 @@ class AutomaticAdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.c.set_enhancement_settings(False, 1, 20)
 
+    def test_persistent_list_stall_saves_bounded_evidence_before_manual_stop(self):
+        from dataclasses import replace
+        scan = replace(inventory(5), uncertain=True, issues=('卡片槽位漏识别@97,913',))
+        run = self.c._scan_run
+        run.step = Mock(return_value=None)
+        run.phase_at = time.monotonic()-2
+        run.stable_frames = 5
+        self.c.detector.analyze.return_value = observation()
+        with patch('imprint_decompose.auto_controller.read_inventory', return_value=scan), \
+                patch('imprint_decompose.auto_controller.save_scan_failure') as save:
+            self.c._tick()
+            self.c._tick()
+            save.assert_called_once()
+            self.assertEqual(save.call_args.kwargs, {'category': 'stall'})
+        self.assertEqual(self.c.input.backend.clicks, [])
+        self.assertEqual(self.c.input.backend.scrolls, [])
+
+    def test_stall_evidence_disk_error_does_not_restart_or_send_inputs(self):
+        from dataclasses import replace
+        run = self.c._scan_run
+        run.step = Mock(return_value=None)
+        run.phase_at = time.monotonic()-2
+        run.stable_frames = 5
+        self.c.detector.analyze.return_value = observation()
+        with patch('imprint_decompose.auto_controller.read_inventory', return_value=replace(inventory(5), uncertain=True)), \
+                patch('imprint_decompose.auto_controller.save_scan_failure', side_effect=OSError('disk unavailable')):
+            self.c._tick()
+        self.assertTrue(run.valid)
+        self.assertEqual(self.c.input.backend.clicks, [])
+        self.assertEqual(self.c.input.backend.scrolls, [])
+
     def test_color_setting_change_revokes_running_authorizations(self):
         old = self.c._scan_run
         self.c.set_keep_two_elements(False)
