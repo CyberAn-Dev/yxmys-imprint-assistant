@@ -485,23 +485,21 @@ class ImprintDecomposeUI(BaseUI):
         status.pack(fill='x', pady=(0, 6))
         status.columnconfigure(2, weight=1)
         self._vars['window_status'] = tk.StringVar(value='未找到窗口')
-        self._label(status, '', textvariable=self._vars['window_status'], fg=self.MUTED,
-                    bg=self.FIELD, size=9, anchor='w').grid(row=0, column=0, columnspan=3, sticky='w')
         reference = self.controller.cfg['window']
         suggestion = f"建议分辨率：{reference['reference_width']}×{reference['reference_height']}"
         self._label(status, suggestion, fg=self.MUTED,
-                    bg=self.FIELD, size=9, anchor='w').grid(row=1, column=0, sticky='w', padx=(0, 18))
+                    bg=self.FIELD, size=9, anchor='w').grid(row=0, column=0, sticky='w', padx=(0, 18))
         self._vars['current_resolution'] = tk.StringVar(value='当前分辨率：—')
         self._label(
             status, '', textvariable=self._vars['current_resolution'], fg=self.MUTED,
             bg=self.FIELD, size=9, anchor='w',
-        ).grid(row=1, column=1, sticky='w', padx=(0, 18))
+        ).grid(row=0, column=1, sticky='w', padx=(0, 18))
         self._vars['usage_status'] = tk.StringVar(value='当前无法使用')
         self._usage_status_label = self._label(
             status, '', textvariable=self._vars['usage_status'], fg='#ff3b30',
             bg=self.FIELD, size=9, bold=True, anchor='w',
         )
-        self._usage_status_label.grid(row=1, column=2, sticky='w')
+        self._usage_status_label.grid(row=0, column=2, sticky='w')
         toolbar = tk.Frame(outer, bg=self.BG)
         toolbar.pack(fill='x', pady=(0, 8))
         for text, command, color, hover, fg in (

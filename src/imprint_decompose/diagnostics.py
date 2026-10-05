@@ -48,7 +48,8 @@ def run(destination):
         assert len({widget.winfo_rootx() for widget in aligned}) == 1, 'left choices must align'
         assert {widget.winfo_width() for widget in aligned} == {158}, 'left choices must have equal widths'
         resolution_labels = ui._resolution_panel.winfo_children()
-        assert len({widget.winfo_rooty() for widget in resolution_labels[1:]}) == 1, 'resolutions and usability must share one row'
+        assert len(resolution_labels) == 3
+        assert len({widget.winfo_rooty() for widget in resolution_labels}) == 1, 'resolutions and usability must share one row'
         assert ui._usage_status_label.master is ui._resolution_panel
         visible_labels = [widget.cget('text') for widget in descendants(ui.root)
                           if widget.winfo_class() == 'Label']

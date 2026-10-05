@@ -79,7 +79,10 @@ if (-not $process.WaitForExit(45000)) {
     throw 'Packaged self-test startup timed out; release unchanged. Check execution restrictions before retrying.'
 }
 $process.Refresh()
-if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $check)) { throw 'Packaged self-test failed; release unchanged.' }
+if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $check)) {
+    if (Test-Path -LiteralPath $check) { Get-Content -LiteralPath $check -Raw | Write-Output }
+    throw 'Packaged self-test failed; release unchanged.'
+}
 $result = Get-Content -LiteralPath $check -Raw | ConvertFrom-Json
 if (-not $result.success) { throw "Packaged self-test failed: $($result.error)" }
 $published = Join-Path $release "$name-v$version.exe"
