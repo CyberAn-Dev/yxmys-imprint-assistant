@@ -932,10 +932,10 @@ class ScrollWorkflowTests(unittest.TestCase):
         self.assertTrue(rig.run.single_page)
         self.assertEqual(rig.run.short_page_items, 1)
 
-    def test_verified_top_bottom_and_full_rescan_after_changes(self):
+    def test_verified_bottom_finishes_without_rescan_after_changes(self):
         rig = Rig()
         rig.scan = inventory(5, 4, 3, 5, 4)
-        rig.run.pass_processed = 1  # a changed inventory requires another sweep
+        rig.run.pass_processed = 1  # mutations no longer trigger another sweep
         texture = np.random.default_rng(7).integers(0, 256, (850, 510, 3), dtype=np.uint8)
         offset = 210
         wheels, first_ascent_steps = [], {}
@@ -952,12 +952,34 @@ class ScrollWorkflowTests(unittest.TestCase):
             if rig.run.phase == Phase.DONE:
                 break
         self.assertEqual(rig.run.phase, Phase.DONE)
-        self.assertEqual(rig.run.pass_number, 2)
+        self.assertEqual(rig.run.pass_number, 1)
         self.assertEqual(offset, 560)
         self.assertIn(2, wheels)
         self.assertIn(-1, wheels)
-        self.assertEqual(first_ascent_steps, {1: 2, 2: 2})
+        self.assertEqual(first_ascent_steps, {1: 2})
         self.assertTrue(all(abs(wheel) <= 2 for wheel in wheels))
+
+    def test_done_at_bottom_never_issues_another_input(self):
+        for processed in (0, 1, 100):
+            rig = Rig()
+            rig.run.seeking_top = False
+            rig.run.pass_processed = processed
+            rig.run._boundary(rig.now, inventory(5, 4, 3))
+            self.assertEqual(rig.run.phase, Phase.DONE)
+            self.assertFalse(rig.run.seeking_top)
+            self.assertEqual(rig.run.pass_number, 1)
+            for _ in range(5):
+                self.assertIsNone(rig.step(observation(), inventory(5, 4, 3)))
+
+    def test_bottom_candidates_remain_processable_after_prior_mutations(self):
+        rig = Rig()
+        rig.run.seeking_top = False
+        rig.run.pass_processed = 10
+        rig.run._boundary(rig.now, inventory(5, 2))
+        self.assertEqual(rig.run.phase, Phase.LIST)
+        self.assertFalse(rig.run.seeking_top)
+        rig.scan = inventory(5, 2)
+        self.assertEqual(rig.command(observation()).kind, 'select')
 
     def test_confirmed_motion_plus_one_ignored_event_does_not_claim_boundary(self):
         rig = Rig()

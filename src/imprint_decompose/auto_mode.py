@@ -434,18 +434,9 @@ class AutoRun:
             self._fail('已到滚动边界，但底部仍有被遮挡卡片；请检查窗口比例/列表边界，未宣称全部完成')
         elif scan.candidates:
             self.message = '已到达底部，先处理完整可见的初始 2 属性刻印'
-        elif self.pass_processed:
-            # A complete no-work sweep is required after mutations. This
-            # catches cards shifted above the viewport by sorting/deletions.
-            self.pass_number += 1
-            self.pass_processed = 0
-            self.seeking_top = True
-            self.top_seek_notches = self.TOP_SEEK_NOTCHES
-            self.top_seek_limit = self.MAX_SCROLL_NOTCHES
-            self.message = '已到达底部，回顶部复扫以检查补位或重排遗漏'
         else:
             self._transition(Phase.DONE, now)
-            self.message = '已验证到底且完整复扫无候选，当前筛选列表处理完成'
+            self.message = '已确认到底且当前无候选，本次向下扫描完成；不再回顶部复扫'
             return
         self._transition(Phase.LIST, now, retain_stability=True)
 

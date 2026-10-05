@@ -237,7 +237,8 @@ class ImprintDecomposeUI(BaseUI):
                 '处理完成',
                 '完成刻印自动筛选分解\n\n'
                 f'本轮已处理 {stats.auto_processed} 枚刻印。\n'
-                '已复核当前筛选列表，没有剩余可处理的初始 2 属性刻印。',
+                '已确认列表到底或为单页，当前没有待处理候选。\n'
+                '本次扫描结束，不再回顶部复扫。',
                 parent=self.root,
             )
 
