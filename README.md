@@ -11,7 +11,7 @@
 ## 界面预览
 
 <p align="center">
-  <img src="assets/screenshot.jpg" alt="刻印助手主界面" width="780">
+  <img src="assets/screenshot.png" alt="刻印助手主界面" width="780">
 </p>
 
 ## 怎么使用
