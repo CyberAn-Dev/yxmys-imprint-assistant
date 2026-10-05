@@ -41,6 +41,20 @@ class ModeStatusTests(unittest.TestCase):
         self.assertEqual(self.c._scan_mode_enabled, automatic)
         self.assertFalse(self.c._auto_enabled)
 
+    def test_completed_event_survives_legacy_refresh_and_window_poll(self):
+        from imprint_decompose.auto_mode import Phase
+        self.c.start()
+        run = self.c._scan_run
+        run.phase = Phase.DONE
+        self.c._finish_scan(run)
+        self.events.clear()
+        for _ in range(3):
+            self.c._update_stats(self.analysis, self.window)
+            self.c.refresh_window_info()
+        self.assertTrue(self.events)
+        self.assertTrue(all(s.auto_completion_id == 1 and s.auto_phase == '全部完成'
+                            and s.program_status == '自动处理完成' for s in self.events))
+
     def test_every_real_refresh_snapshot_keeps_auto_mode_and_progress(self):
         self.c.set_auto_mode(True)
         self.c.start()

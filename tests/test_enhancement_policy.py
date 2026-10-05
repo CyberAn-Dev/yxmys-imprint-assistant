@@ -1,5 +1,7 @@
 import unittest
+import time
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from imprint_decompose.controller_v2 import (
     ImprintDecomposeController,
@@ -9,6 +11,31 @@ from imprint_decompose.controller_v2 import (
 
 
 class EnhancementSlotPlanTests(unittest.TestCase):
+    def test_color_switch_is_applied_by_manual_enhancement_workflow(self):
+        from imprint_decompose.controller import ImprintDecomposeController as BaseController
+        for enabled in (True, False):
+            controller = object.__new__(ImprintDecomposeController)
+            elements = ('storm', 'arc', 'arc', 'storm')
+            controller._manual_origin_filled = 2
+            controller._enhancement_is_enabled = lambda: True
+            controller._enhancement_current_combination = elements
+            controller._enhancement_original_elements = elements[:2]
+            controller._enhancement_progress = lambda: (2, 2)
+            controller._phase_since = time.monotonic()-1
+            controller._initial_existing_enhancements = 0
+            controller._result_signature = (2, elements, (), 0)
+            controller._result_seen = 1
+            controller.stats = SimpleNamespace(red_attribute_threshold=20, keep_two_elements=enabled)
+            controller._keep_detail = Mock()
+            controller._record_operation = Mock()
+            analysis = SimpleNamespace(detail=SimpleNamespace(right_ready=True, right_combination=elements,
+                                        right_filled_count=4), dismantle_ready=True,
+                                        red_attribute_values=(), red_attribute_unreadable_count=0)
+            with patch.object(BaseController, '_handle_detail') as legacy:
+                controller._handle_detail(None, None, analysis)
+                self.assertEqual(controller._keep_detail.called, enabled)
+                self.assertEqual(legacy.called, not enabled)
+
     def test_target_one(self):
         self.assertEqual(enhancement_slot_plan(2, 1), (0, 1, False))
         self.assertEqual(enhancement_slot_plan(3, 1), (1, 0, False))

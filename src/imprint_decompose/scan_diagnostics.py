@@ -37,6 +37,8 @@ def save_scan_failure(frame, scan, run, timings):
         'motion': run.last_motion, 'stable_frames': run.stable_frames,
         'readable_frames': run.readable_frames, 'timings_ms': timings,
         'identity_roi': run.identity_roi, 'identity_difference': run.identity_difference,
+        'session': run.session_evidence, 'observed_elements': run.last_elements,
+        'settings': asdict(run.settings),
         'scan': asdict(scan) if scan is not None else None, 'images': written,
     }
     (folder / (prefix + 'latest.json')).write_text(

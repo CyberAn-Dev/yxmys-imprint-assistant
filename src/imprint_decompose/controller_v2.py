@@ -209,7 +209,7 @@ def red_attribute_meets_threshold(values, threshold):
     return any(value >= threshold for value in values)
 
 
-def enhancement_keep_reason(values, unreadable, threshold, originals, current):
+def enhancement_keep_reason(values, unreadable, threshold, originals, current, *, keep_two_elements=True):
     """Return a keep reason only when the configured rule is satisfied."""
     qualifying = tuple(value for value in values if value >= threshold)
     if qualifying:
@@ -219,7 +219,7 @@ def enhancement_keep_reason(values, unreadable, threshold, originals, current):
 
     # A detected red value that is below the threshold must not be rescued by
     # the color-combination rule.
-    if values:
+    if values or not keep_two_elements:
         return None
 
     original_elements = tuple(originals or ())
@@ -420,6 +420,7 @@ class ImprintDecomposeController(AutoControllerMixin, BaseController):
                     reason = enhancement_keep_reason(
                         analysis.red_attribute_values, unreadable, threshold,
                         originals, current,
+                        keep_two_elements=self.stats.keep_two_elements,
                     )
                 if reason:
                     if reason.startswith('红色词条 '):

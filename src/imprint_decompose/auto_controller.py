@@ -50,6 +50,9 @@ class AutoControllerMixin:
             self.stats.auto_pass = run.pass_number
             if run.item:
                 self.stats.enhancement_completed = run.item.completed
+            if run.valid and run.phase == Phase.DONE and getattr(run, 'completion_reported', False):
+                self.stats.auto_phase = '全部完成'
+                self.stats.program_status = '自动处理完成'
 
     def _emit_stats(self):
         # The legacy refresh and the UI window poll can both publish. Project
@@ -88,15 +91,15 @@ class AutoControllerMixin:
             self.stats.auto_filter = '仅本轮初始 2 属性；原有 3/4/5 跳过'
             if enabled:
                 self.set_enhancement_settings(True, self._enhancement_target, self._enhancement_red_threshold)
-            self.stats.auto_phase = '待开始' if enabled else '手动选卡'
+            self.stats.auto_phase = '待开始' if enabled else '手动选择'
             self.stats.last_action = '请回到刻印列表，F9 开始自动扫描' if enabled else '等待你手动选择刻印'
-            logger.info('选卡方式已更新: selection_mode=%s confirmation_mode=%s',
+            logger.info('选择方式已更新: selection_mode=%s confirmation_mode=%s',
                         'auto' if enabled else 'manual', self._confirmation_mode)
         self._emit_stats()
 
     def set_enhancement_settings(self, enabled, rounds, red_threshold_percent):
         if self._scan_mode_enabled and not enabled:
-            raise ValueError('自动扫描必须开启强化；如需关闭，请先切换为手动选卡')
+            raise ValueError('自动扫描必须开启强化；如需关闭，请先切换为手动选择')
         if self.enabled.is_set():
             self.pause()
             self.stats.last_action = '设置已变更并暂停；请返回列表后重新开始'
@@ -107,6 +110,19 @@ class AutoControllerMixin:
             self.pause()
             self.stats.last_action = '确认方式变更，已暂停；请返回列表后重新开始'
         return super().set_confirmation_mode(mode)
+
+    def set_keep_two_elements(self, enabled):
+        with self._auto_settings_lock:
+            enabled = bool(enabled)
+            if enabled == self.stats.keep_two_elements:
+                return
+            if self.enabled.is_set():
+                self.pause()
+            self._invalidate_scan()
+            self.stats.keep_two_elements = enabled
+            self.stats.last_action = '保留规则已更新；请回到列表后重新开始'
+            logger.info('保留规则已更新: keep_two_elements=%s', enabled)
+            self._emit_stats()
 
     def start(self):
         if self.enabled.is_set() or self.stopping.is_set():
@@ -126,6 +142,7 @@ class AutoControllerMixin:
                     self._confirmation_mode,
                     int(cfg.get('max_items', 1600)), int(cfg.get('max_scrolls', 1200)),
                     float(cfg.get('max_seconds', 7200)),
+                    keep_two_elements=self.stats.keep_two_elements,
                 )
                 self._scan_run = AutoRun(settings, self._auto_keep_policy, time.monotonic())
                 self._scan_window = None
@@ -179,7 +196,7 @@ class AutoControllerMixin:
         self.stats.auto_processed = run.processed
         self.stats.auto_pass = run.pass_number
         names = {
-            Phase.LIST: '回到顶部' if run.seeking_top else '逐卡扫描',
+            Phase.LIST: '回到顶部' if run.seeking_top else '逐枚扫描',
             Phase.SCROLL: '滚动验证', Phase.OPEN: '复核初始属性',
             Phase.DETAIL: '筛选判断', Phase.ENHANCE: '等待强化',
             Phase.CONFIRM: '等待分解确认', Phase.RETURN: '等待返回列表',
@@ -201,6 +218,21 @@ class AutoControllerMixin:
             self._commit_pending(simulated=False)
             self._scan_reported_decomposed = run.decomposed
         self._emit_stats()
+
+    def _finish_scan(self, run):
+        # A persistent, monotonic event survives the UI's latest-only queue.
+        # Errors, material timeouts, pause and safety limits never reach here.
+        with self._auto_settings_lock:
+            if run is not self._scan_run or not run.valid or run.phase != Phase.DONE:
+                return
+            self.enabled.clear()
+            if getattr(run, 'completion_reported', False):
+                return
+            run.completion_reported = True
+            self.stats.program_status = '自动处理完成'
+            self.stats.auto_completion_id += 1
+            self._record_operation(run.message)
+            self._emit_stats()
 
     def _tick(self):
         if not self._scan_mode_enabled:
@@ -264,10 +296,7 @@ class AutoControllerMixin:
             self._trace_scan(run, scan, timings, intent)
             self._sync_scan_stats(run)
             if run.phase == Phase.DONE:
-                self.enabled.clear()
-                self.stats.program_status = '自动处理完成'
-                self._record_operation(run.message)
-                self._emit_stats()
+                self._finish_scan(run)
                 return
             if intent:
                 self._dispatch_scan(run, intent, window, analysis)
@@ -321,7 +350,7 @@ class AutoControllerMixin:
         # must never let an old auto action borrow the new enabled event.
         with self._auto_settings_lock:
             if not self._scan_mode_enabled:
-                raise AutoSafetyError('选卡模式已改变，取消旧自动动作')
+                raise AutoSafetyError('选择模式已改变，取消旧自动动作')
             return self._dispatch_scan_locked(run, intent, window, analysis)
 
     def _dispatch_scan_locked(self, run, intent, window, analysis):
@@ -350,12 +379,12 @@ class AutoControllerMixin:
                 raise AutoSafetyError('复核期间动作授权已撤销，未发送输入')
             if intent.kind == 'select':
                 if latest.state != ImprintState.LIST:
-                    raise AutoSafetyError('选卡前列表状态改变，取消点击')
+                    raise AutoSafetyError('选择前列表状态改变，取消点击')
                 scan = read_inventory(latest_frame, self._scan_roi or self.feature_cfg['vision']['list_roi'])
                 if scan.uncertain or not any(
                         abs(c.x-intent.point[0]) <= 2 and abs(c.y-intent.point[1]) <= 2
                         and c.elements == run.item.initial for c in scan.candidates):
-                    raise AutoSafetyError('选卡前位置或初始属性改变，取消点击')
+                    raise AutoSafetyError('选择前位置或初始属性改变，取消点击')
             elif intent.kind in ('enhance', 'dismantle'):
                 if (latest.state != ImprintState.DETAIL or not latest.dismantle_ready
                         or ordered_slots(latest.detail) != run.item.current):
@@ -365,7 +394,8 @@ class AutoControllerMixin:
                         latest.red_attribute_unreadable_count
                         or tuple(latest.red_attribute_values) != tuple(analysis.red_attribute_values)
                         or self._auto_keep_policy(latest.red_attribute_values, 0, run.settings.threshold,
-                                                  run.item.initial, run.item.current)):
+                                                  run.item.initial, run.item.current,
+                                                  keep_two_elements=run.settings.keep_two_elements)):
                     raise AutoSafetyError('分解前复核不一致，已保护当前刻印')
             elif latest.state != ImprintState.CONFIRM or not latest.confirm_ready:
                 raise AutoSafetyError('确认分解前弹窗状态改变，取消确认')

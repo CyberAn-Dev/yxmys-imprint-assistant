@@ -215,25 +215,80 @@ class AutomaticWorkflowTests(unittest.TestCase):
         rig.ack(rig.command(observation(State.DETAIL)))
         sent_at = rig.now
         result = observation(State.DETAIL, COLORS[:3])
-        for elapsed in (.01, .10):
+        for elapsed in (.01, .10, .20, .40, .60):
             self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+elapsed))
             self.assertEqual(rig.run.item.completed, 0)
-        self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+.20))
+        self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+.66))
         self.assertEqual(rig.run.item.completed, 1)
-        command = rig.run.step(result, rig.frame, None, sent_at+.21)
+        command = rig.run.step(result, rig.frame, None, sent_at+.67)
         self.assertEqual(command.kind, 'enhance')
         self.assertTrue(rig.run.allows(command))
 
-    def test_final_filter_does_not_inherit_short_enhancement_delay(self):
+    def test_final_filter_waits_for_animation_then_reuses_settled_reading(self):
         rig = Rig(1)
         rig.open()
         rig.ack(rig.command(observation(State.DETAIL)))
         sent_at = rig.now
         result = observation(State.DETAIL, COLORS[:3])
-        for elapsed in (.01, .10, .20, .25, .35):
+        for elapsed in (.01, .10, .20, .25, .35, .60, .66):
             self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+elapsed))
-        command = rig.run.step(result, rig.frame, None, sent_at+.42)
+        command = rig.run.step(result, rig.frame, None, sent_at+.67)
         self.assertEqual(command.kind, 'dismantle')
+
+    def test_new_slot_transient_color_is_not_committed(self):
+        rig = Rig(2)
+        rig.open()
+        rig.ack(rig.command(observation(State.DETAIL)))
+        sent_at = rig.now
+        transient = observation(State.DETAIL, COLORS[:2] + ('大地',))
+        for elapsed in (.01, .12, .23, .40):
+            self.assertIsNone(rig.run.step(transient, rig.frame, None, sent_at+elapsed))
+            self.assertEqual(rig.run.item.completed, 0)
+        result = observation(State.DETAIL, COLORS[:3])
+        for elapsed in (.45, .56, .70, .81):
+            self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+elapsed))
+        self.assertEqual(rig.run.item.current, COLORS[:3])
+        self.assertEqual(rig.run.item.completed, 1)
+        self.assertEqual(rig.run.step(result, rig.frame, None, sent_at+.82).kind, 'enhance')
+
+    def test_same_classified_color_but_animated_pixels_cannot_confirm_growth(self):
+        rig = Rig()
+        rig.open()
+        rig.ack(rig.command(observation(State.DETAIL)))
+        sent_at = rig.now
+        result = observation(State.DETAIL, COLORS[:3])
+        for i in range(12):
+            rig.frame[341:370, 300:505] = i*15
+            self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+.1*(i+1)))
+            self.assertEqual(rig.run.item.completed, 0)
+        for elapsed in (1.3, 1.4, 1.6):
+            self.assertIsNone(rig.run.step(result, rig.frame, None, sent_at+elapsed))
+        self.assertEqual(rig.run.item.completed, 1)
+        self.assertEqual(rig.actions.count('enhance'), 1)
+
+    def test_settled_record_change_still_fails_and_keeps_diagnostic_record(self):
+        rig = Rig()
+        result = rig.enhance()
+        with self.assertRaisesRegex(AutoSafetyError, '预期=.*实际='):
+            rig.command(observation(State.DETAIL, result[:2] + ('大地',)))
+        self.assertIsNone(rig.run.item)
+        self.assertEqual(rig.run.session_evidence['expected'], result)
+        self.assertEqual(rig.run.last_elements, result[:2] + ('大地',))
+
+    def test_color_switch_off_decomposes_nonred_two_color_result(self):
+        rig = Rig(keep_two_elements=False)
+        result = rig.enhance(result=(COLORS[0], COLORS[1], COLORS[1]))
+        self.assertEqual(rig.command(observation(State.DETAIL, result)).kind, 'dismantle')
+
+    def test_color_switch_off_still_preserves_threshold_match_and_unknown_red(self):
+        for unreadable, values in ((0, (20,)), (1, ())):
+            rig = Rig(keep_two_elements=False)
+            result = rig.enhance(result=(COLORS[0], COLORS[1], COLORS[1]))
+            if unreadable:
+                with self.assertRaises(AutoSafetyError):
+                    rig.command(observation(State.DETAIL, result, values, unreadable))
+            else:
+                self.assertEqual(rig.command(observation(State.DETAIL, result, values)).kind, 'keep')
 
     def test_imprint_name_change_after_enhancement_remains_protected(self):
         rig = Rig(2)

@@ -28,6 +28,15 @@ def run(destination):
         assert ui._enhancement_enabled_var.get()
         assert ui._enhancement_rounds_var.get() == '2'
         assert ui._enhancement_threshold_var.get() == '20'
+        assert ui._keep_two_elements_var.get() and controller.stats.keep_two_elements
+        assert ui._startup_hidden, 'window must remain unmapped until final layout'
+        ui._keep_two_elements_var.set(False)
+        ui._on_keep_two_elements_changed()
+        assert not controller.stats.keep_two_elements
+        assert '元素保留已关闭' in ui._threshold_note_var.get()
+        ui._keep_two_elements_var.set(True)
+        ui._on_keep_two_elements_changed()
+        assert controller.stats.keep_two_elements and not controller.enabled.is_set()
         assert red_attribute_meets_threshold((20,), 20)
         ocr = RedPercentageOCR(feature)
         assert ocr.available and ocr._ensure_loaded(), 'OCR model unavailable'
@@ -70,6 +79,8 @@ def run(destination):
             ui._selection_mode_var.trace_remove('write', trace)
             controller.on_stats = callback
         import copy
+        fixed_widgets = (ui.root, ui._current_panel, ui._statistics_panel, ui._state_panel)
+        baseline_sizes = [(w.winfo_width(), w.winfo_height()) for w in fixed_widgets]
         sample = copy.deepcopy(controller.stats)
         sample.current_combination = '风暴 + 烈焰 + 暗影'
         sample.total_kept = 1
@@ -80,6 +91,30 @@ def run(destination):
         sample.last_action = '滚轮往返后未恢复同一列表边界，已暂停；请回到刻印列表后重新开始'
         ui._apply_stats(sample)
         ui.root.update()
+        assert [(w.winfo_width(), w.winfo_height()) for w in fixed_widgets] == baseline_sizes, 'status changed panel sizes'
+        # Exercise blank/5-slot items, multi-digit counters and long error
+        # summaries: none may resize the window or clip any panel's children.
+        for combination in ('-', '风暴 + 烈焰 + 电弧 + 暗影 + 大地'):
+            sample.current_combination = combination
+            sample.element_counts = dict.fromkeys(sample.element_counts, 8000)
+            sample.combination_counts = {'regression': 1600}
+            sample.last_action = 'AUTO_SAFETY_STOP 当前属性与本轮记录不一致；' + '很长的诊断内容' * 25
+            ui._apply_stats(sample)
+            ui.root.update()
+            assert [(w.winfo_width(), w.winfo_height()) for w in fixed_widgets] == baseline_sizes, 'dynamic data changed panel sizes'
+            lines = ui._vars['last_action'].get().splitlines()
+            assert len(lines) <= 2
+            assert all(ui._status_font.measure(line) <= ui._status_label.winfo_width()-4 for line in lines), 'status text clipped'
+        # Successful completion is a once-per-run notification, not a text
+        # match that could accidentally treat a safety stop as completion.
+        from unittest.mock import patch
+        with patch('imprint_decompose.ui_v2.messagebox.showinfo') as popup:
+            sample.auto_completion_id = 1
+            sample.auto_phase = '全部完成'
+            sample.program_status = '自动处理完成'
+            ui._apply_stats(sample)
+            ui._apply_stats(sample)
+            popup.assert_called_once()
         pending = list(ui.root.winfo_children())
         while pending:
             widget = pending.pop()
@@ -90,12 +125,20 @@ def run(destination):
                 assert widget.winfo_rootx() >= ui.root.winfo_rootx(), 'widget left of window'
                 assert widget.winfo_rooty() + widget.winfo_height() <= ui.root.winfo_rooty() + ui.root.winfo_height() + 1, 'widget below window'
                 assert widget.winfo_rootx() + widget.winfo_width() <= ui.root.winfo_rootx() + ui.root.winfo_width() + 1, 'widget right of window'
+                parent = widget.master
+                assert widget.winfo_y() >= 0 and widget.winfo_x() >= 0, 'child outside parent'
+                assert widget.winfo_y() + widget.winfo_height() <= parent.winfo_height() + 1, f'child clipped vertically: {widget}'
+                assert widget.winfo_x() + widget.winfo_width() <= parent.winfo_width() + 1, f'child clipped horizontally: {widget}'
         assert ui.root.winfo_height() <= ui.root.winfo_screenheight() - 60, 'window exceeds screen'
         result.update(version=__version__, ui_size=[ui.root.winfo_width(), ui.root.winfo_height()],
                       model_inference='passed', threshold_settings='passed',
                       automatic_mode_controls='passed',
                       startup_defaults='passed',
                       live_mode_refresh='passed',
+                      fixed_status_layout='passed',
+                      color_keep_switch='passed',
+                      completion_notification='passed',
+                      hidden_startup='passed',
                       single_page_layout='passed', success=True)
     except Exception:
         result['error'] = traceback.format_exc()

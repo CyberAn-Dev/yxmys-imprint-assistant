@@ -5,6 +5,8 @@ import queue
 import re
 import sys
 import tkinter as tk
+from tkinter import messagebox
+from tkinter.font import Font
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageTk
@@ -94,23 +96,32 @@ class ImprintDecomposeUI(BaseUI):
     def __init__(self, controller):
         self._updates = queue.Queue(maxsize=1)
         self._element_images = {}
+        self._count_images = {}
         self._last_error_logged = None
         self._last_kept_count = 0
         self._keep_alert_active = False
         self._keep_combination = ''
         self._threshold_initialized = False
+        self._last_completion_id = 0
         super().__init__(controller)
         self.root.title(f'{APP_NAME} v{__version__}')
         self._set_window_icon()
         self.root.report_callback_exception = self._on_callback_error
-        self.root.attributes('-alpha', 1.0)
         self.root.resizable(True, True)
         self._apply_stats(controller.stats)
         self._fit_content(initial=True)
+        self._startup_hidden = not self.root.winfo_ismapped()
+        self.root.deiconify()
         self.root.after(80, self._drain)
 
     def _fit_content(self, *, initial=False):
         self.root.update_idletasks()
+        if initial:
+            # Measure once for the actual Windows font/DPI. Later status or
+            # counter changes cannot change these panels or the window size.
+            self._bottom.configure(height=max(self._current_panel.winfo_reqheight(),
+                                               self._statistics_panel.winfo_reqheight()))
+            self.root.update_idletasks()
         width = max(780, self._outer.winfo_reqwidth())
         height = self._outer.winfo_reqheight()
         self.root.minsize(width, height)
@@ -152,14 +163,14 @@ class ImprintDecomposeUI(BaseUI):
             'window_status': stats.window_status,
             'current_resolution': self._format_current_resolution(stats.window_size),
             'usage_status': usage_status,
-            'last_action': self._friendly_action(stats.last_action),
+            'last_action': self._wrap_status(self._status_text(stats)),
             'total_decomposed': str(stats.total_decomposed),
             'total_kept': str(stats.total_kept),
             'red_threshold_matches': str(getattr(stats, 'red_threshold_matches', 0)),
             'auto_progress': (
                 f'{stats.auto_phase}  ·  已处理 {stats.auto_processed}  ·  本页候选 {stats.auto_candidates}'
                 f'  ·  滚动 {stats.auto_scrolled}  ·  第 {stats.auto_pass} 遍'
-                if stats.auto_mode else '手动选卡：点开刻印后处理；原本已有 5 属性仍受保护'
+                if stats.auto_mode else '手动选择：点开刻印后处理；原本已有 5 属性仍受保护'
             ),
         }
         for key, value in mapping.items():
@@ -173,6 +184,7 @@ class ImprintDecomposeUI(BaseUI):
         for variable, value in (
                 (self._enhancement_enabled_var, stats.enhancement_enabled),
                 (self._selection_mode_var, 'auto' if stats.auto_mode else 'manual'),
+                (self._keep_two_elements_var, stats.keep_two_elements),
                 (self._enhancement_rounds_var, str(stats.enhancement_target)),
                 (self._confirmation_mode_var, 'manual' if stats.confirmation_mode == '手动确认' else 'auto')):
             if variable.get() != value:
@@ -204,12 +216,51 @@ class ImprintDecomposeUI(BaseUI):
             self._keep_alert.place_forget()
 
         self._combination_var.set(self._format_combination_summary(stats.combination_counts))
-        self._fit_content()
 
         error = (stats.last_error or '').strip()
         if error and error != '-' and error != self._last_error_logged:
             self._last_error_logged = error
             self._save_error_snapshot(error, stats)
+        self._notify_completion(stats)
+
+    def _notify_completion(self, stats):
+        event = stats.auto_completion_id
+        if event <= self._last_completion_id:
+            return
+        self._last_completion_id = event  # mark BEFORE opening a modal dialog
+        if stats.auto_phase == '全部完成' and stats.program_status == '自动处理完成':
+            messagebox.showinfo(
+                '处理完成',
+                '完成刻印自动筛选分解\n\n'
+                f'本轮已处理 {stats.auto_processed} 枚刻印。\n'
+                '已复核列表，没有剩余可处理的初始 2 属性刻印。',
+                parent=self.root,
+            )
+
+    @classmethod
+    def _status_text(cls, stats):
+        text = cls._friendly_action(stats.last_action)
+        if stats.auto_phase == '保护暂停' and stats.last_error not in ('', '-', None):
+            text = '安全暂停 · ' + str(stats.last_error)
+        # Keep the summary two lines high. Full evidence is retained in logs;
+        # do not let arbitrarily long diagnostics change the window geometry.
+        text = ' '.join(text.split()).replace('选卡', '选择').replace('逐卡', '逐枚')
+        return text if len(text) <= 84 else text[:81] + '…'
+
+    def _wrap_status(self, text):
+        width = self._status_label.winfo_width()
+        limit = min(690, width-8) if width > 20 else 690
+        lines, line = [], ''
+        for char in text:
+            if line and self._status_font.measure(line + char) > limit:
+                lines.append(line)
+                line = ''
+                if len(lines) == 2:
+                    while self._status_font.measure(lines[-1] + '…') > limit:
+                        lines[-1] = lines[-1][:-1]
+                    return '\n'.join(lines[:-1] + [lines[-1] + '…'])
+            line += char
+        return '\n'.join(lines + [line])
 
     def _window_usage_status(self, size_text, window_status, vision_state):
         window_match = re.search(
@@ -261,6 +312,8 @@ class ImprintDecomposeUI(BaseUI):
     @staticmethod
     def _friendly_action(value):
         text = (value or '').strip()
+        if text.startswith('AUTO_SAFETY_STOP'):
+            return '安全暂停 · ' + text[len('AUTO_SAFETY_STOP'):].strip()
         if not text or text == '-':
             return '等待操作'
         technical = (
@@ -347,15 +400,19 @@ class ImprintDecomposeUI(BaseUI):
         if not hasattr(self, '_threshold_note_var'):
             return
         value = self._enhancement_threshold_var.get().strip() or '20'
-        operator = '≥'
+        suffix = '读不清时保护' if self._keep_two_elements_var.get() else '元素保留已关闭'
         self._threshold_note_var.set(
-            f'保留：红字 {operator} {value}%；无红字时才判断不超过两种颜色；读不清时保护'
+            f'红字 ≥{value}% 保留 · {suffix}'
         )
 
     def _on_selection_mode_changed(self):
         self.controller.set_auto_mode(self._selection_mode_var.get() == 'auto')
         # The setter publishes a normalized snapshot to the queue. Never read
         # the worker's partially updated shared stats directly here.
+
+    def _on_keep_two_elements_changed(self):
+        self.controller.set_keep_two_elements(self._keep_two_elements_var.get())
+        self._update_threshold_note()
 
     def _on_enhancement_settings_changed(self, _event=None, *, show_error=True):
         result = super()._on_enhancement_settings_changed(
@@ -366,7 +423,7 @@ class ImprintDecomposeUI(BaseUI):
         self._update_threshold_note()
         return result
 
-    def _element_icon(self, element):
+    def _element_icon(self, element, size=34):
         # Keep the game's original pixels; only remove the surrounding screenshot background.
         atlas = {
             '风暴': ('storm_earth.png', (37, 19, 67, 50)),
@@ -384,7 +441,7 @@ class ImprintDecomposeUI(BaseUI):
                        (0, icon.height - 1), (icon.width - 1, icon.height - 1)):
             if icon.getpixel(corner)[3]:
                 ImageDraw.floodfill(icon, corner, (0, 0, 0, 0), thresh=45)
-        icon = icon.resize((34, 34), Image.Resampling.LANCZOS)
+        icon = icon.resize((size, size), Image.Resampling.LANCZOS)
         return ImageTk.PhotoImage(icon, master=self.root)
 
     def _panel(self, parent, title):
@@ -438,14 +495,14 @@ class ImprintDecomposeUI(BaseUI):
         footer = self._footer = tk.Frame(outer, bg=self.BG)
         footer.pack(side='bottom', fill='x', pady=(3, 0))
         coffee = self._label(
-            footer, '☕ 如果你觉得这个工具不错，可以请我喝一杯咖啡',
+            footer, '☕ 请我喝一杯咖啡',
             fg='#007aff', bg=self.BG, size=9, cursor='hand2',
         )
         coffee.configure(font=('Microsoft YaHei UI', 9, 'underline'))
-        coffee.pack(anchor='center', pady=(0, 3))
+        coffee.pack(side='left')
         coffee.bind('<Button-1>', self._show_coffee_qr)
         footer_meta = tk.Frame(footer, bg=self.BG)
-        footer_meta.pack(fill='x')
+        footer_meta.pack(side='right', fill='x', expand=True, padx=(18, 0))
         self._label(footer_meta, '仅供开发交流 · 非盈利 · 开源非商业使用', fg=self.MUTED,
                     bg=self.BG, size=9).pack(side='left')
         self._label(footer_meta, f'作者：{__author__}   ·   v{__version__}', fg=self.MUTED,
@@ -495,22 +552,22 @@ class ImprintDecomposeUI(BaseUI):
                     fg=self.MUTED, size=9).pack(side='right')
 
         reminder = tk.Frame(
-            outer, bg='#fff8e6', padx=14, pady=4,
+            outer, bg='#fff8e6', padx=14, pady=1,
             highlightbackground='#ffd27a', highlightthickness=1,
         )
         reminder.pack(fill='x', pady=(0, 6))
         self._label(
             reminder, '使用前请手动勾选“本次登录不再提醒”',
-            fg='#a65f00', bg='#fff8e6', size=10, bold=True,
+            fg='#a65f00', bg='#fff8e6', size=9, bold=True,
         ).pack(anchor='center')
 
         settings = self._panel(outer, '')
         selection = tk.Frame(settings, bg=self.CARD)
         selection.pack(fill='x', pady=(0, 6))
-        self._label(selection, '选卡方式', bold=True).pack(side='left', padx=(0, 10))
+        self._label(selection, '选择方式', bold=True).pack(side='left', padx=(0, 10))
         self._selection_mode_var = tk.StringVar(value='auto' if self.controller.stats.auto_mode else 'manual')
         self._segment(selection, self._selection_mode_var,
-                      [('手动选卡', 'manual'), ('自动扫描', 'auto')],
+                      [('手动选择', 'manual'), ('自动扫描', 'auto')],
                       self._on_selection_mode_changed).pack(side='left')
         self._label(selection, '自动仅处理初始 2 属性 · 原有 3/4/5 跳过',
                     fg=self.MUTED, size=9).pack(side='right')
@@ -535,14 +592,21 @@ class ImprintDecomposeUI(BaseUI):
             [('≥10%', '10'), ('≥15%', '15'), ('≥20%', '20'), ('≥27%', '27')],
             self._on_enhancement_settings_changed,
         ).pack(side='left')
+        color_rule = tk.Frame(settings, bg=self.CARD)
+        color_rule.pack(fill='x', pady=(4, 0))
+        self._keep_two_elements_var = tk.BooleanVar(value=self.controller.stats.keep_two_elements)
+        tk.Checkbutton(
+            color_rule, text='保留未出现第三种元素的刻印（无红字时）',
+            variable=self._keep_two_elements_var, command=self._on_keep_two_elements_changed,
+            bg=self.CARD, activebackground=self.CARD, fg=self.TEXT,
+            selectcolor=self.CARD, bd=0, highlightthickness=0, cursor='hand2',
+            font=('Microsoft YaHei UI', 9),
+        ).pack(side='left')
         self._threshold_note_var = tk.StringVar()
         self._enhancement_threshold_var.trace_add('write', self._update_threshold_note)
         self._update_threshold_note()
-        self._label(settings, '', textvariable=self._threshold_note_var,
-                    fg=self.MUTED, size=9).pack(anchor='e', pady=(5, 0))
-        self._vars['auto_progress'] = tk.StringVar(value='待开始' if self.controller.stats.auto_mode else '手动选卡')
-        self._label(settings, '', textvariable=self._vars['auto_progress'],
-                    fg='#0071e3', size=9).pack(anchor='w', pady=(5, 0))
+        self._label(color_rule, '', textvariable=self._threshold_note_var,
+                    fg=self.MUTED, size=9).pack(side='right')
 
         metrics = self._panel(outer, '')
         for i, (title, key) in enumerate((
@@ -558,49 +622,69 @@ class ImprintDecomposeUI(BaseUI):
             self._label(cell, title, fg=self.MUTED).pack(side='left', padx=(0, 10))
             self._label(cell, '', textvariable=var, size=19, bold=True, fg='#007aff').pack(side='left')
 
-        bottom = tk.Frame(outer, bg=self.BG)
+        bottom = self._bottom = tk.Frame(outer, bg=self.BG, height=114)
         bottom.pack(fill='x', pady=(0, 8))
+        bottom.pack_propagate(False)
+        bottom.grid_propagate(False)
+        bottom.rowconfigure(0, weight=1)
         bottom.columnconfigure(0, weight=1, uniform='bottom')
         bottom.columnconfigure(1, weight=1, uniform='bottom')
-        current = tk.Frame(bottom, bg=self.CARD, padx=12, pady=8,
+        current = self._current_panel = tk.Frame(bottom, bg=self.CARD, padx=12, pady=6,
                            highlightbackground='#dedee3', highlightthickness=1)
         current.grid(row=0, column=0, sticky='nsew', padx=(0, 4))
         current_top = tk.Frame(current, bg=self.CARD)
         current_top.pack(fill='x')
         self._label(current_top, '当前刻印', fg=self.MUTED).pack(side='left')
-        alert_slot = tk.Frame(current_top, bg=self.CARD, width=180, height=38)
+        alert_slot = tk.Frame(current_top, bg=self.CARD, width=130, height=26)
         alert_slot.pack(side='right')
         alert_slot.pack_propagate(False)
-        self._keep_alert = tk.Button(alert_slot, text='需要注意 · 已保留', command=self._dismiss_keep_alert,
-                                     bg='#e53643', fg='white', activebackground='#c92431',
-                                     activeforeground='white', relief='flat', bd=0, padx=14, pady=6,
-                                     cursor='hand2', font=('Microsoft YaHei UI', 10, 'bold'))
+        self._keep_alert = tk.Button(alert_slot, text='已保留 · 知道了', command=self._dismiss_keep_alert,
+                                     bg='#e8f5ec', fg='#248a3d', activebackground='#d1ebda',
+                                     activeforeground='#248a3d', relief='flat', bd=0, padx=6, pady=2,
+                                     cursor='hand2', font=('Microsoft YaHei UI', 9))
         self._displayed_combination = None
-        self._current_icons = tk.Frame(current, bg=self.CARD)
+        self._current_icons = tk.Frame(current, bg=self.CARD, height=38)
         self._current_icons.pack(fill='x', pady=(5, 0), ipady=1)
-        self._vars['last_action'] = tk.StringVar(value='等待选卡')
-        action = self._label(current, '', textvariable=self._vars['last_action'], fg=self.MUTED, anchor='w', justify='left')
-        action.pack(fill='x', pady=(4, 0))
-        action.configure(wraplength=320)
+        self._current_icons.pack_propagate(False)
+        self._label(current, '元素按实际槽位顺序显示', fg=self.MUTED, size=9).pack(anchor='w')
 
-        stats = tk.Frame(bottom, bg=self.CARD, padx=12, pady=8,
+        stats = self._statistics_panel = tk.Frame(bottom, bg=self.CARD, padx=12, pady=6,
                          highlightbackground='#dedee3', highlightthickness=1)
         stats.grid(row=0, column=1, sticky='nsew', padx=(4, 0))
-        self._label(stats, '本次刻印分解统计', size=11, bold=True).pack(anchor='w', pady=(0, 5))
+        self._label(stats, '本次刻印分解统计', size=10, bold=True).pack(anchor='w')
         strip = tk.Frame(stats, bg=self.CARD)
-        strip.pack(fill='x', pady=(0, 6))
-        for element in ELEMENT_ORDER:
+        strip.pack(fill='x')
+        for i, element in enumerate(ELEMENT_ORDER):
             var = tk.StringVar(value='0')
             self._element_vars[element] = var
             cell = tk.Frame(strip, bg=self.CARD)
-            cell.pack(side='left', expand=True)
+            cell.grid(row=0, column=i, sticky='ew')
+            strip.columnconfigure(i, weight=1, uniform='elements')
             try:
                 icon = self._element_icon(element)
                 self._element_images[element] = icon
-                tk.Label(cell, image=icon, bg=self.CARD).pack(side='left')
+                count_icon = self._element_icon(element, size=26)
+                self._count_images[element] = count_icon
+                tk.Label(cell, image=count_icon, bg=self.CARD).pack(side='left')
             except (FileNotFoundError, OSError, KeyError):
                 self._label(cell, element, fg=self.MUTED).pack(side='left')
-            self._label(cell, '', textvariable=var, size=14, bold=True).pack(side='left', padx=(4, 0))
+            self._label(cell, '', textvariable=var, size=10, bold=True, width=4, anchor='w').pack(side='left')
         self._combination_var = tk.StringVar(value='—')
         self._label(stats, '', textvariable=self._combination_var,
                     fg=self.MUTED, size=9, wraplength=320, justify='left').pack(anchor='w')
+
+        state = self._state_panel = self._panel(outer, '')
+        state_head = tk.Frame(state, bg=self.CARD)
+        state_head.pack(fill='x')
+        self._label(state_head, '运行状态', bold=True, size=10).pack(side='left')
+        self._vars['auto_progress'] = tk.StringVar(value='待开始')
+        self._label(state_head, '', textvariable=self._vars['auto_progress'],
+                    fg='#0071e3', size=9).pack(side='right')
+        self._vars['last_action'] = tk.StringVar(value='等待选择')
+        action = self._label(state, '', textvariable=self._vars['last_action'], fg=self.MUTED,
+                             anchor='w', justify='left', height=2, wraplength=690, size=9)
+        self._status_label = action
+        self._status_font = Font(root=self.root, font=action.cget('font'))
+        action.pack(fill='x', pady=(3, 0))
+        self._label(state, '遇到错误？请将 EXE 同目录的 logs 和 debug 文件夹提交给开发者排查。',
+                    fg=self.MUTED, size=9).pack(anchor='w', pady=(3, 0))

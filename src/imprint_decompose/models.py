@@ -165,7 +165,9 @@ class ImprintStats:
     auto_scrolled: int = 0
     auto_processed: int = 0
     auto_pass: int = 1
-    auto_phase: str = '手动选卡'
+    auto_phase: str = '手动选择'
+    keep_two_elements: bool = True
+    auto_completion_id: int = 0
     last_action: str = '-'
     operation_history: str = '-'
     last_error: str = '-'

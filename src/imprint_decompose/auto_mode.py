@@ -37,6 +37,7 @@ class AutoSettings:
     max_items: int = 1600
     max_scrolls: int = 1200
     max_seconds: float = 7200
+    keep_two_elements: bool = True
 
     def __post_init__(self):
         if self.rounds not in (1, 2, 3) or self.confirmation not in ('auto', 'manual'):
@@ -93,6 +94,11 @@ class AutoRun:
     LIST_STABLE_SECONDS = .20
     RESULT_SECONDS = .40
     ENHANCE_STABLE_SECONDS = .18
+    # Newly revealed slots animate through colors which can be classified
+    # consistently for several frames. Require settled pixels AND colors,
+    # with a minimum age after the acknowledged click (never a blind retry).
+    SLOT_STABLE_SECONDS = .35
+    ENHANCE_MIN_SECONDS = .65
     SCROLL_SETTLE = .30
     # Modestly faster than downward scanning, with observation after every
     # step. Never fire a blind whole-inventory jump at startup or on rescan.
@@ -147,6 +153,8 @@ class AutoRun:
         self.readable_key = None
         self.readable_frames = 0
         self.readable_since = now
+        self.last_elements = None
+        self.session_evidence = None
 
     def expects_empty(self):
         return bool(self.single_page and self.item and self.item.outcome == 'decompose'
@@ -155,6 +163,13 @@ class AutoRun:
                     and self.phase in (Phase.RETURN, Phase.REWARD))
 
     def invalidate(self):
+        if self.item is not None:
+            s = self.item
+            self.session_evidence = {
+                'serial': s.serial, 'initial': s.initial, 'expected': s.current,
+                'completed': s.completed, 'origin_filled': s.origin_filled,
+                'approved': s.approved, 'confirm_sent': s.confirm_sent,
+            }
         self.valid = False
         self.pending = None
         self.item = None
@@ -288,23 +303,30 @@ class AutoRun:
             self.stable_key = None
             return None
         elements = ordered_slots(analysis.detail)
+        self.last_elements = elements
         if elements is None:
             self.stable_key = None
             return None
-        key = (elements, tuple(analysis.red_attribute_values), analysis.red_attribute_unreadable_count)
+        slot_y = getattr(analysis.detail, 'right_slot_y', 0) or 355
+        slot_image = frame[max(0, slot_y-14):slot_y+15, 300:505]
+        key = (elements, slot_y, tuple(analysis.red_attribute_values), analysis.red_attribute_unreadable_count)
         # Observe each slot increase once, then reuse that observation for
         # the next enhancement. Final red-value decisions keep their longer
         # stabilization time and destructive actions still recapture.
         final_decision = self.phase == Phase.DETAIL and self.item and self.item.completed >= self.settings.rounds
         delay = self.RESULT_SECONDS if final_decision else self.ENHANCE_STABLE_SECONDS
-        if not self._stable(key, now, delay=delay):
+        if self.phase == Phase.ENHANCE:
+            delay = self.SLOT_STABLE_SECONDS
+        if not self._stable(key, now, slot_image, delay=delay):
+            return None
+        if self.phase == Phase.ENHANCE and now-self.phase_at < self.ENHANCE_MIN_SECONDS:
             return None
         s = self.item
         if not s or s.origin_filled != 2:
             self._fail('缺少本轮初始 2 属性记录，禁止强化和分解')
         if self.phase == Phase.OPEN:
             if len(elements) != 2 or elements != s.initial:
-                self._fail('选卡详情与初始 2 属性候选不一致；原有 3/4/5 属性不会处理')
+                self._fail('所选刻印详情与初始 2 属性候选不一致；原有 3/4/5 属性不会处理')
             s.opened = True
             if self.fixed_identity_roi is None:
                 # The proficiency toast covers the artwork and enhancement
@@ -328,10 +350,11 @@ class AutoRun:
             s.current = elements
             s.completed += 1
             self._transition(Phase.DETAIL, now, retain_stability=True)
-            self.message = f'已确认强化成功 {s.completed}/{self.settings.rounds} 次'
+            self.message = f'已确认强化成功 {s.completed}/{self.settings.rounds} 次：{" + ".join(elements)}'
             return None
         if elements != s.current:
-            self._fail('当前属性与本轮记录不一致，禁止继续操作')
+            self._fail(f'当前属性与本轮记录不一致，禁止继续操作；'
+                       f'预期={" + ".join(s.current)}；实际={" + ".join(elements)}')
         if s.completed < self.settings.rounds:
             self.message = f'强化第 {s.completed+1}/{self.settings.rounds} 次'
             return self._intent('enhance', reason=self.message)
@@ -340,7 +363,8 @@ class AutoRun:
         values = tuple(analysis.red_attribute_values)
         if any(not math.isfinite(value) or not 0 <= value <= 100 for value in values):
             self._fail('红色词条数值异常，当前刻印已保护')
-        reason = self.keep_policy(values, 0, self.settings.threshold, s.initial, elements)
+        reason = self.keep_policy(values, 0, self.settings.threshold, s.initial, elements,
+                                  keep_two_elements=self.settings.keep_two_elements)
         if reason:
             self.message = f'保留：{reason}；随后继续扫描'
             # Count only after returning to LIST, not when a button is guessed.
@@ -420,7 +444,7 @@ class AutoRun:
                     self.still = 0
                     self.next_scroll_kind = 'travel'
                     self._transition(Phase.LIST, now, retain_stability=True)
-                    self.message = '已确认单页小库存，开始逐卡处理'
+                    self.message = '已确认单页小库存，开始逐枚处理'
                     return
                 self._fail('正反滚轮都未产生可验证移动，无法确认列表边界；请检查窗口/列表区域')
             if self.scroll_kind == 'restore':
@@ -522,9 +546,9 @@ class AutoRun:
             timeout = 300
         if now - self.phase_at > timeout:
             reasons = {
-                Phase.LIST: '列表槽位未能完整、稳定识别；未继续下滑或选卡',
+                Phase.LIST: '列表槽位未能完整、稳定识别；未继续下滑或选择',
                 Phase.SCROLL: '滚动后画面未停稳或未回到列表；未重复发送滚轮',
-                Phase.OPEN: '选卡后未观察到可核验详情；未重复点击',
+                Phase.OPEN: '选择后未观察到可核验详情；未重复点击',
                 Phase.ENHANCE: '强化后未观察到槽位增加（可能材料不足）；未重复强化',
                 Phase.DETAIL: '详情属性未稳定；未分解',
                 Phase.CONFIRM: '未观察到关联分解确认结果；未重复点击',

@@ -111,18 +111,13 @@ class ImprintDecomposeUI:
     def __init__(self, controller: ImprintDecomposeController) -> None:
         self.controller = controller
         self.root = tk.Tk()
+        # Do not map an empty 820x900 native window before the subclass has
+        # built and measured its real layout (causes a large shadow flash).
+        self.root.withdraw()
         self.root.title(f"刻印分解 · {__version__}")
         self.root.geometry("820x900")
         self.root.resizable(False, False)
         self.root.configure(bg=self.BG)
-        try:
-            self.root.attributes("-alpha", 0.98)
-        except tk.TclError:
-            pass
-        self.root.lift()
-        self.root.attributes("-topmost", True)
-        self.root.after(700, lambda: self.root.attributes("-topmost", False))
-        self.root.focus_force()
 
         self._vars: dict[str, tk.StringVar] = {}
         self._element_vars: dict[str, tk.StringVar] = {}
@@ -322,4 +317,5 @@ class ImprintDecomposeUI:
         self.root.destroy()
 
     def run(self) -> None:
+        self.root.deiconify()
         self.root.mainloop()

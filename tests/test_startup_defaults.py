@@ -18,6 +18,8 @@ class StartupDefaultTests(unittest.TestCase):
         self.assertEqual(self.c.stats.enhancement_target, 2)
         self.assertEqual(self.c.stats.red_attribute_threshold, 20.)
         self.assertEqual(self.c.stats.auto_phase, '待开始')
+        self.assertTrue(self.c.stats.keep_two_elements)
+        self.assertEqual(self.c.stats.auto_completion_id, 0)
         self.assertFalse(self.c.enabled.is_set())
         self.assertFalse(self.c._auto_enabled, 'legacy scanner stays disabled')
         self.assertIsNone(self.c._scan_run)
@@ -34,6 +36,7 @@ class StartupDefaultTests(unittest.TestCase):
         self.assertEqual(self.c.input.backend.scrolls, [])
 
     def test_user_choices_are_not_reset_when_pausing_or_restarting(self):
+        self.c.set_keep_two_elements(False)
         self.c.set_auto_mode(False)
         self.c.set_enhancement_settings(False, 1, 27)
         self.assertFalse(self.c.stats.auto_mode)
@@ -45,6 +48,7 @@ class StartupDefaultTests(unittest.TestCase):
         self.c.start()
         self.assertEqual(self.c._scan_run.settings.rounds, 1)
         self.assertEqual(self.c._scan_run.settings.threshold, 27.)
+        self.assertFalse(self.c._scan_run.settings.keep_two_elements)
 
 
 if __name__ == '__main__':

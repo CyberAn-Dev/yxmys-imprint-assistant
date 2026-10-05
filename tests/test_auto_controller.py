@@ -66,6 +66,39 @@ class AutomaticAdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.c.set_enhancement_settings(False, 1, 20)
 
+    def test_color_setting_change_revokes_running_authorizations(self):
+        old = self.c._scan_run
+        self.c.set_keep_two_elements(False)
+        self.assertFalse(old.valid)
+        self.assertFalse(self.c.enabled.is_set())
+        self.c.start()
+        self.assertFalse(self.c._scan_run.settings.keep_two_elements)
+
+    def test_completion_is_published_once_only_for_valid_done_run(self):
+        run = self.c._scan_run
+        for phase in (Phase.LIST, Phase.ENHANCE, Phase.INVALID):
+            run.phase = phase
+            self.c._finish_scan(run)
+            self.assertEqual(self.c.stats.auto_completion_id, 0)
+        run.phase = Phase.DONE
+        self.c._finish_scan(run)
+        self.c._finish_scan(run)
+        self.assertEqual(self.c.stats.auto_completion_id, 1)
+        self.assertFalse(self.c.enabled.is_set())
+        self.assertEqual(self.c.stats.program_status, '自动处理完成')
+
+    def test_fresh_dismantle_recheck_respects_disabled_color_rule(self):
+        rig = Rig(keep_two_elements=False)
+        from test_auto_mode import COLORS
+        result = rig.enhance(result=(COLORS[0], COLORS[1], COLORS[1]))
+        analysis = observation(ImprintState.DETAIL, result)
+        intent = rig.command(analysis)
+        self.c._scan_run = rig.run
+        self.c.detector.analyze.return_value = analysis
+        self.c._dispatch_scan(rig.run, intent, self.window, analysis)
+        self.assertEqual(rig.run.phase, Phase.CONFIRM)
+        self.assertEqual(len(self.c.input.backend.clicks), 1)
+
     def test_top_seek_reaches_backend_as_two_notches(self):
         rig = Rig()
         intent = rig.command(observation())
