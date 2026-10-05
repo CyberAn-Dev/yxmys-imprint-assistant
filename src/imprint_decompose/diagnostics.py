@@ -13,7 +13,7 @@ def run(destination):
         from .config import load_feature_config
         from .controller_v2 import ImprintDecomposeController, red_attribute_meets_threshold
         from .digit_ocr_fallback import RedPercentageOCR
-        from .ui_v2 import ImprintDecomposeUI
+        from .ui_v2 import ImprintDecomposeUI, SegmentedControl
         cfg, feature = load_feature_config()
         controller = ImprintDecomposeController(cfg, feature, dry_run=True)
         controller.locator.find = lambda: None
@@ -35,6 +35,36 @@ def run(destination):
         coffee_center = ui._coffee_link.winfo_x() + ui._coffee_link.winfo_width()/2
         assert abs(coffee_center-ui._footer.winfo_width()/2) <= 1, 'coffee link must be centered'
         from types import SimpleNamespace
+        assert '如果你觉得这个工具不错，可以请我喝一杯咖啡' in ui._coffee_link.cget('text')
+        assert ui._statistics_panel.winfo_width() > ui._current_panel.winfo_width()*1.4
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+        segments = [widget for widget in descendants(ui.root) if isinstance(widget, SegmentedControl)]
+        assert len(segments) == 6, 'all six choice groups must share one control style'
+        for segment in segments:
+            assert segment._control_height == 36
+            for item in segment.find_all():
+                if segment.type(item) == 'text':
+                    left, top, right, bottom = segment.bbox(item)
+                    assert 0 <= left < right <= segment.winfo_width(), 'choice text clipped'
+                    assert 0 <= top < bottom <= segment.winfo_height(), 'choice text clipped'
+            callbacks = []
+            command = segment.command
+            value = segment.variable.get()
+            segment.command = lambda: callbacks.append(True)
+            try:
+                for index, (_, choice) in enumerate(segment.choices):
+                    event = SimpleNamespace(x=(index+0.5)*segment._control_width/len(segment.choices))
+                    segment._toggle(event)
+                    assert segment.variable.get() == choice
+                    count = len(callbacks)
+                    segment._toggle(event)
+                    assert len(callbacks) == count, 'selected choice must be idempotent'
+            finally:
+                segment.variable.set(value)
+                segment.command = command
         ui._color_keep_switch._toggle(SimpleNamespace(x=100))
         assert not controller.stats.keep_two_elements
         assert '元素保留已关闭' in ui._threshold_note_var.get()

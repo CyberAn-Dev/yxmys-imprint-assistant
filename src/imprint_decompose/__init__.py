@@ -1,3 +1,3 @@
-__version__ = "4.0.2"
+__version__ = "4.0.3"
 __author__ = "CyberAn"
 APP_NAME = "yxmys-刻印快速筛选分解小助手"

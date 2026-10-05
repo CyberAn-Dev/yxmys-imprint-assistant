@@ -17,11 +17,15 @@ from .ui import ImprintDecomposeUI as BaseUI, RoundedButton
 from .controller import ELEMENT_ORDER
 
 
-class ConfirmationSwitch(tk.Canvas):
+class SegmentedControl(tk.Canvas):
     """Compact two-state segmented control."""
 
-    def __init__(self, parent, variable, command):
-        super().__init__(parent, width=158, height=36, bg=parent.cget('bg'),
+    def __init__(self, parent, variable, command, choices, *, width=None, height=36):
+        self.choices = tuple(choices)
+        font = Font(root=parent, family='Microsoft YaHei UI', size=9, weight='bold')
+        width = width or (max(font.measure(label) for label, _ in choices)+22)*len(choices)+6
+        self._control_width, self._control_height = width, height
+        super().__init__(parent, width=width, height=height, bg=parent.cget('bg'),
                          highlightthickness=0, bd=0, cursor='hand2')
         self.variable = variable
         self.command = command
@@ -29,21 +33,26 @@ class ConfirmationSwitch(tk.Canvas):
         self.variable.trace_add('write', lambda *_: self._draw())
         self._draw()
 
-    def _toggle(self, _event):
-        self.variable.set('manual' if self.variable.get() == 'auto' else 'auto')
-        self.command()
+    def _toggle(self, event):
+        index = max(0, min(len(self.choices)-1, int(event.x*len(self.choices)/self._control_width)))
+        value = self.choices[index][1]
+        if self.variable.get() != value:
+            self.variable.set(value)
+            self.command()
 
     def _draw(self):
         self.delete('all')
-        automatic = self.variable.get() == 'auto'
-        color = '#007aff' if automatic else '#34c759'
-        self._round_rect(1, 1, 157, 35, 9, fill='#f2f2f7', outline='#d8d8dc')
-        x0, x1 = ((3, 79) if automatic else (79, 155))
-        self._round_rect(x0, 3, x1, 33, 7, fill=color, outline=color)
-        self.create_text(41, 18, text='自动', fill='white' if automatic else '#6e6e73',
-                         font=('Microsoft YaHei UI', 10, 'bold' if automatic else 'normal'))
-        self.create_text(117, 18, text='手动', fill='white' if not automatic else '#6e6e73',
-                         font=('Microsoft YaHei UI', 10, 'bold' if not automatic else 'normal'))
+        w, h = self._control_width, self._control_height
+        step = (w-6)/len(self.choices)
+        self._round_rect(1, 1, w-1, h-1, 9, fill='#f2f2f7', outline='#d8d8dc')
+        for index, (label, value) in enumerate(self.choices):
+            active = self.variable.get() == value
+            left = 3+index*step
+            if active:
+                self._round_rect(left, 3, left+step, h-3, 7, fill='#007aff', outline='#007aff')
+            self.create_text(left+step/2, h/2, text=label,
+                             fill='white' if active else '#6e6e73',
+                             font=('Microsoft YaHei UI', 9, 'bold' if active else 'normal'))
 
     def _round_rect(self, x0, y0, x1, y1, radius, **kwargs):
         points = (x0 + radius, y0, x1 - radius, y0, x1, y0,
@@ -53,41 +62,17 @@ class ConfirmationSwitch(tk.Canvas):
         return self.create_polygon(points, smooth=True, splinesteps=24, **kwargs)
 
 
-class EnhancementSwitch(tk.Canvas):
-    """Shared on/off control for enhancement and element retention."""
+class ConfirmationSwitch(SegmentedControl):
+    def __init__(self, parent, variable, command):
+        super().__init__(parent, variable, command, [('自动', 'auto'), ('手动', 'manual')], width=158)
+
+
+class EnhancementSwitch(SegmentedControl):
+    """On/off options share the same appearance as all other choices."""
 
     def __init__(self, parent, variable, command, *, width=150, height=36):
-        super().__init__(parent, width=width, height=height, bg=parent.cget('bg'),
-                         highlightthickness=0, bd=0, cursor='hand2')
-        self._control_width, self._control_height = width, height
-        self.variable = variable
-        self.command = command
-        self.bind('<Button-1>', self._toggle)
-        self.variable.trace_add('write', lambda *_: self._draw())
-        self._draw()
-
-    def _toggle(self, event):
-        enabled = event.x < self._control_width/2
-        if enabled != bool(self.variable.get()):
-            self.variable.set(enabled)
-            self.command()
-
-    def _draw(self):
-        self.delete('all')
-        enabled = bool(self.variable.get())
-        active = '#007aff' if enabled else '#8e8e93'
-        w, h = self._control_width, self._control_height
-        ConfirmationSwitch._round_rect(
-            self, 1, 1, w-1, h-1, 9, fill='#f2f2f7', outline='#d8d8dc'
-        )
-        x0, x1 = ((3, w/2) if enabled else (w/2, w-3))
-        ConfirmationSwitch._round_rect(
-            self, x0, 3, x1, h-3, 7, fill=active, outline=active
-        )
-        self.create_text(w/4+1, h/2, text='开', fill='white' if enabled else '#6e6e73',
-                         font=('Microsoft YaHei UI', 10, 'bold' if enabled else 'normal'))
-        self.create_text(w*3/4-1, h/2, text='关', fill='white' if not enabled else '#6e6e73',
-                         font=('Microsoft YaHei UI', 10, 'bold' if not enabled else 'normal'))
+        super().__init__(parent, variable, command, [('开', True), ('关', False)],
+                         width=width, height=height)
 
 
 class ImprintDecomposeUI(BaseUI):
@@ -458,34 +443,7 @@ class ImprintDecomposeUI(BaseUI):
         return frame
 
     def _segment(self, parent, variable, choices, command):
-        rail = tk.Frame(parent, bg='#f2f2f7', padx=2, pady=2)
-        items = []
-        for text, value in choices:
-            def select(choice=value):
-                variable.set(choice)
-                command()
-
-            button = tk.Button(
-                rail, text=text, command=select, relief='flat', bd=0,
-                padx=10, pady=3, font=('Microsoft YaHei UI', 9), cursor='hand2',
-            )
-            button.pack(side='left', fill='x', expand=True, padx=1)
-            items.append((button, value))
-
-        def refresh(*_args):
-            selected = variable.get()
-            for button, value in items:
-                active = selected == value
-                button.configure(
-                    bg='#007aff' if active else '#f2f2f7',
-                    fg='white' if active else self.MUTED,
-                    activebackground='#0a84ff' if active else '#e5e5ea',
-                    activeforeground='white' if active else '#006bea',
-                )
-
-        variable.trace_add('write', refresh)
-        refresh()
-        return rail
+        return SegmentedControl(parent, variable, command, choices)
 
     def _label(self, parent, text, *, size=10, **kwargs):
         widget = super()._label(parent, text, size=size, **kwargs)
@@ -502,16 +460,16 @@ class ImprintDecomposeUI(BaseUI):
         for column in range(3):
             footer.columnconfigure(column, weight=1, uniform='footer')
         coffee = self._coffee_link = self._label(
-            footer, '☕ 请我喝一杯咖啡',
+            footer, '☕ 如果你觉得这个工具不错，可以请我喝一杯咖啡',
             fg='#007aff', bg=self.BG, size=9, cursor='hand2',
         )
         coffee.configure(font=('Microsoft YaHei UI', 9, 'underline'))
-        coffee.grid(row=0, column=1)
+        coffee.grid(row=0, column=0, columnspan=3, pady=(0, 3))
         coffee.bind('<Button-1>', self._show_coffee_qr)
         self._label(footer, '仅供开发交流 · 非商业使用', fg=self.MUTED,
-                    bg=self.BG, size=9).grid(row=0, column=0, sticky='w')
+                    bg=self.BG, size=9).grid(row=1, column=0, sticky='w')
         self._label(footer, f'作者：{__author__}   ·   v{__version__}', fg=self.MUTED,
-                    bg=self.BG, size=9).grid(row=0, column=2, sticky='e')
+                    bg=self.BG, size=9).grid(row=1, column=2, sticky='e')
 
         head = tk.Frame(outer, bg=self.BG)
         head.pack(fill='x', pady=(0, 4))
@@ -604,7 +562,7 @@ class ImprintDecomposeUI(BaseUI):
         color_rule = tk.Frame(filters, bg=self.CARD)
         color_rule.pack(fill='x', pady=(4, 2))
         self._keep_two_elements_var = tk.BooleanVar(value=self.controller.stats.keep_two_elements)
-        self._label(color_rule, '保留未出现第三种元素', size=9).pack(side='left', padx=(0, 7))
+        self._label(color_rule, '保留未出现第三种元素', fg=self.MUTED, size=9).pack(side='left', padx=(0, 7))
         self._color_keep_switch = EnhancementSwitch(
             color_rule, self._keep_two_elements_var, self._on_keep_two_elements_changed, width=110)
         self._color_keep_switch.pack(side='right')
@@ -633,8 +591,8 @@ class ImprintDecomposeUI(BaseUI):
         bottom.pack_propagate(False)
         bottom.grid_propagate(False)
         bottom.rowconfigure(0, weight=1)
-        bottom.columnconfigure(0, weight=1, uniform='bottom')
-        bottom.columnconfigure(1, weight=1, uniform='bottom')
+        bottom.columnconfigure(0, weight=2, uniform='bottom')
+        bottom.columnconfigure(1, weight=3, uniform='bottom')
         current = self._current_panel = tk.Frame(bottom, bg=self.CARD, padx=12, pady=6,
                            highlightbackground='#dedee3', highlightthickness=1)
         current.grid(row=0, column=0, sticky='nsew', padx=(0, 4))
@@ -659,7 +617,7 @@ class ImprintDecomposeUI(BaseUI):
         stats.grid(row=0, column=1, sticky='nsew', padx=(4, 0))
         self._label(stats, '本次刻印分解统计', size=10, bold=True).pack(anchor='w')
         strip = tk.Frame(stats, bg=self.CARD)
-        strip.pack(fill='x')
+        strip.pack(fill='x', pady=(6, 6))
         for i, element in enumerate(ELEMENT_ORDER):
             var = tk.StringVar(value='0')
             self._element_vars[element] = var
@@ -674,7 +632,7 @@ class ImprintDecomposeUI(BaseUI):
                 tk.Label(cell, image=count_icon, bg=self.CARD).pack(side='left')
             except (FileNotFoundError, OSError, KeyError):
                 self._label(cell, element, fg=self.MUTED).pack(side='left')
-            self._label(cell, '', textvariable=var, size=10, bold=True, width=4, anchor='w').pack(side='left')
+            self._label(cell, '', textvariable=var, size=10, bold=True, width=4, anchor='w').pack(side='left', padx=(4, 0))
         self._combination_var = tk.StringVar(value='—')
         self._label(stats, '', textvariable=self._combination_var,
                     fg=self.MUTED, size=9, wraplength=320, justify='left').pack(anchor='w')
