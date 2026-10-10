@@ -106,7 +106,9 @@ class AutoRun:
     # step. Never fire a blind whole-inventory jump at startup or on rescan.
     TOP_SEEK_NOTCHES = 2
     MAX_SCROLL_NOTCHES = 32
-    TARGET_SCROLL_PIXELS = 180
+    # A short viewport contains fewer than three rows. Two-row travel leaves
+    # too little distinctive overlap when neighboring imprints look alike.
+    TARGET_SCROLL_PIXELS = 90
     TOP_SCROLL_PIXELS = 90
     TIMEOUT = 8.0
     STILL_ATTEMPTS = 2
@@ -521,7 +523,7 @@ class AutoRun:
                 # motion, target two rows down / one row up, at most 2x per
                 # observed step. Probe/restore remain exact single notches.
                 target = min(self.TOP_SCROLL_PIXELS if self.seeking_top else self.TARGET_SCROLL_PIXELS,
-                             max(5, max_shift-8))
+                             max(5, min(max_shift-8, image.shape[0] // 3)))
                 # A step clamped at an edge can be shorter than normal. Do
                 # not learn a falsely slow wheel from it and overshoot on
                 # the next pass. Retain the fastest verified rate per direction.

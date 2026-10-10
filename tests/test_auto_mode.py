@@ -580,14 +580,14 @@ class ScrollWorkflowTests(unittest.TestCase):
         rig.ack(rig.command(observation()))
         rig.frame[680:970, 20:530] = texture[70:360]
         command = rig.command(observation())
-        self.assertEqual(command.wheel, -2)
+        self.assertEqual(command.wheel, -1)
         rig.ack(command)
         rig.frame[680:970, 20:530] = texture[105:395]
         command = rig.command(observation())
-        self.assertEqual(command.wheel, -2)
+        self.assertEqual(command.wheel, -1)
         self.assertEqual(rig.run.scroll_pixels_per_notch[-1], 70)
 
-    def test_larger_viewport_allows_two_row_target(self):
+    def test_larger_viewport_retains_one_row_target(self):
         rig = Rig()
         rig.frame = np.zeros((1200, 550, 3), np.uint8)
         rig.run.seeking_top = False
@@ -600,7 +600,7 @@ class ScrollWorkflowTests(unittest.TestCase):
             wheels.append(abs(command.wheel))
             offset -= command.wheel*6
             rig.ack(command)
-        self.assertEqual(wheels, [1, 2, 4, 8, 16, 30, 30])
+        self.assertEqual(wheels, [1, 2, 4, 8, 15, 15, 15])
 
     def test_slow_real_game_wheel_adapts_towards_two_rows_without_losing_overlap(self):
         for seeking_top in (False, True):
@@ -618,8 +618,8 @@ class ScrollWorkflowTests(unittest.TestCase):
                     wheels.append(abs(command.wheel))
                     offset -= command.wheel * 6
                     rig.ack(command)
-                self.assertEqual(wheels, [2, 4, 8, 15, 15, 15] if seeking_top else [1, 2, 4, 8, 16, 28])
-                self.assertTrue(all(wheel * 6 <= (90 if seeking_top else 168) for wheel in wheels))
+                self.assertEqual(wheels, [2, 4, 8, 15, 15, 15] if seeking_top else [1, 2, 4, 8, 15, 15])
+                self.assertTrue(all(wheel * 6 <= 90 for wheel in wheels))
                 self.assertTrue(all(b <= 2*a for a, b in zip(wheels, wheels[1:])))
 
     def test_adapted_downward_step_still_cannot_skip_unobserved_rows(self):
@@ -829,7 +829,7 @@ class ScrollWorkflowTests(unittest.TestCase):
             self.assertIsNone(rig.run.step(observation(), rig.frame, rig.scan, dispatched_at+elapsed))
         command = rig.run.step(observation(), rig.frame, rig.scan, dispatched_at+.31)
         self.assertIsNotNone(command)
-        self.assertEqual(command.wheel, -2)
+        self.assertEqual(command.wheel, -1)
 
     def test_already_at_top_stops_after_two_unchanged_steps_and_boundary_check(self):
         rig = Rig()
@@ -864,7 +864,7 @@ class ScrollWorkflowTests(unittest.TestCase):
         command = rig.step(observation())
         self.assertIsNotNone(command)
         self.assertEqual(command.kind, 'scroll')
-        self.assertEqual(command.wheel, -2)
+        self.assertEqual(command.wheel, -1)
 
     def test_coordinate_jitter_does_not_restart_slot_stability(self):
         rig = Rig()

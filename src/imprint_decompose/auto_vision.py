@@ -216,6 +216,13 @@ def read_inventory(frame, roi):
         cards.extend(row_cards)
     cards.sort(key=lambda c: (c.slot_y, c.x))
     for cx, sy, pitch in invalid_strips:
+        # A fragment within one slot pitch of the viewport bottom cannot
+        # establish a complete card. Keep it as a clipped-boundary signal,
+        # not a failure of the fully visible rows above. It never becomes
+        # a ScanCard or authorizes selection/completion.
+        if sy + pitch >= y1 - 1:
+            clipped_bottom = True
+            continue
         # Tiny red fragments in a triangle/star or its level badge can mimic
         # the start of a strip. Only discard them when a FULLY validated five
         # slot strip places the fragment inside that same card's artwork.
@@ -253,13 +260,17 @@ def read_inventory(frame, roi):
                 issues.append(f'列位置异常@{c.x},{c.slot_y}')
             numbered.append(ScanCard(c.x, c.y, c.slot_y, c.pitch, c.elements, c.complete, column))
         cards = numbered
-        clipped_bottom = any(not _bottom_slots_visible(c, y1) for c in cards)
+        clipped_bottom = clipped_bottom or any(not _bottom_slots_visible(c, y1) for c in cards)
         # Do not mistake a missed middle/right card for an incomplete final
         # inventory row. Artwork only flags missing recognition; it never
         # authorizes selecting a card or infers its attribute count.
         red = (((area[:, :, 0] <= 12) | (area[:, :, 0] >= 170))
                & (area[:, :, 1] >= 80) & (area[:, :, 2] >= 70)).astype(np.uint8)
         _, _, art_boxes, art_centers = cv2.connectedComponentsWithStats(red)
+        # Artwork centroids vary by imprint shape. Reserve enough space for
+        # the entire slot strip, not just its centre (live bottom rows can
+        # lose the last few pixels behind navigation). Such rows are never
+        # proof of completion or permission to select unrecognized cards.
         for (_, _, w, h, size), (cx, cy) in zip(art_boxes[1:], art_centers[1:]):
             cx, cy = cx+x0, cy+y0
             if (size >= 250 and 25 <= w <= 100 and 15 <= h <= 100
@@ -276,6 +287,13 @@ def read_inventory(frame, roi):
             if (size >= 250 and 25 <= w <= 100 and 25 <= h <= 100
                     and cy - pitch*2.3 > y0+2 and cy + pitch*3.3 < y1-2):
                 if not any(abs(c.x-cx) < pitch*1.5 and abs(c.y-cy) < pitch*1.7 for c in cards):
+                    # Other positively identified cards in the same row
+                    # establish its real slot height more accurately than
+                    # the shape-dependent artwork centroid estimate.
+                    row = [c for c in cards if abs(c.y-cy) < pitch*1.7]
+                    if row and all(not _bottom_slots_visible(c, y1) for c in row):
+                        clipped_bottom = True
+                        continue
                     uncertain = True
                     issues.append(f'卡片槽位漏识别@{round(cx)},{round(cy)}')
     short_page = False

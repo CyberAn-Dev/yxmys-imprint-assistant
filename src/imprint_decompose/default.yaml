@@ -5,6 +5,7 @@ actions:
   # More responsive observation; elapsed-time animation guards are unchanged.
   capture_interval: 0.045
   dismantle_point: [337, 870]
+  enhance_point: [425, 810]
 
 vision:
   # Small red percentage digits are anti-aliased after window scaling.
